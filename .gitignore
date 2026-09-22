@@ -1,8 +1,12 @@
 node_modules/
 dist/
+!frontend/dist/
+!frontend/dist/**
 target/
 .tools/
 .data/
+!backend/.data/
+!backend/.data/peixun.mv.db
 *.log
 .DS_Store
 test-results/

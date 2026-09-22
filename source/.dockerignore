@@ -1,0 +1,10 @@
+.git
+.tools
+**/node_modules
+**/target
+**/.data
+**/dist
+test-results
+*.xlsx
+*.pptx
+*.docx
