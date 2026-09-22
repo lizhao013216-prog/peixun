@@ -67,7 +67,18 @@ public class DemoService {
             (rs, n) -> rs.getString(1),
             id);
     if (rows.isEmpty()) throw new BusinessException(404, "WORKSPACE_NOT_FOUND", "工作区不存在，请重新选择");
-    return WorkspaceMigration.migrate(parse(rows.get(0)));
+    ObjectNode stored = parse(rows.get(0));
+    ObjectNode migrated = WorkspaceMigration.migrate(stored);
+    if (lock && !stored.equals(migrated)) {
+      migrated.put("revision", stored.path("revision").asLong() + 1);
+      jdbc.update(
+          "UPDATE workspace_state SET revision=?,epoch=?,content=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+          migrated.path("revision").asLong(),
+          migrated.path("epoch").asInt(),
+          migrated.toString(),
+          id);
+    }
+    return migrated;
   }
 
   private void insert(ObjectNode s) {
@@ -110,7 +121,7 @@ public class DemoService {
             : obj();
     authorize(actor, action);
     TrainingDomain.requireCommandScope(s, action, p, domain);
-    String hash = hash(actor + "\n" + action + "\n" + p);
+    String hash = hash(actor + "\n" + domain + "\n" + action + "\n" + p);
     List<Map<String, Object>> receipts =
         jdbc.queryForList(
             "SELECT payload_hash,response FROM command_receipt WHERE workspace_id=? AND epoch=? AND"
@@ -137,7 +148,9 @@ public class DemoService {
               workspace,
               epoch,
               commandId);
-      return parse(response);
+      ObjectNode replay = parse(response);
+      replay.set("state", WorkspaceProjection.forActor(s, actor, domain));
+      return replay;
     }
     if (request.path("expectedRevision").asLong(-1) != s.path("revision").asLong())
       throw new BusinessException(409, "REVISION_CONFLICT", "数据已更新，请刷新后重试");
@@ -153,7 +166,21 @@ public class DemoService {
           "未知平台模拟配置");
       ((ObjectNode) s.get("settings")).put("platformProfile", profile);
       result = (ObjectNode) s.get("settings");
-    } else if (action.matches("(asset|scene|topology|template|station|course|training|issue)\\..*"))
+    } else if (action.startsWith("simulationProject."))
+      result = SimulationProjectService.apply(s, action, p, actor, domain);
+    else if (action.startsWith("simulationTemplate."))
+      result = SimulationTemplateService.apply(s, action, p, actor, domain);
+    else if (action.startsWith("simulationTopology.") || action.startsWith("simulationPreview."))
+      result = SimulationRuntimeService.apply(s, action, p, actor, domain);
+    else if (action.startsWith("curriculum.") || action.startsWith("courseware."))
+      result = CoursewareService.apply(s, action, p, actor, domain);
+    else if (action.startsWith("training.support."))
+      result = SupportTrainingService.apply(s, action, p, actor, commandId);
+    else if (action.startsWith("training.") && TrainingRuntimeService.supports(s, action, p))
+      result = TrainingRuntimeService.apply(s, action, p, actor, domain, commandId);
+    else if (action.startsWith("issue."))
+      result = TrainingIssueService.apply(s, action, p, actor, domain);
+    else if (action.matches("(asset|scene|topology|template|station|course|training|issue)\\..*"))
       result = TrainingModule.apply(s, action, p, actor);
     else if (action.matches("(execution|inspection|rectification|comparison|archive)\\..*"))
       result = ExecutionModule.apply(s, action, p, actor);
@@ -212,9 +239,13 @@ public class DemoService {
       allowed = Set.of("ADMIN");
     else if (action.equals("course.approve")
         || action.equals("course.return")
+        || action.equals("courseware.approve")
+        || action.equals("courseware.return")
         || action.equals("asset.approve")
         || action.equals("training.assign")
         || action.equals("training.confirm")) allowed = Set.of("INSTRUCTOR");
+    else if (action.equals("training.station.save") || action.equals("training.station.connect"))
+      allowed = Set.of("AUTHOR", "INSTRUCTOR");
     else if (action.startsWith("training.")) allowed = Set.of("LEARNER", "INSTRUCTOR");
     else if (action.equals("plan.approve") || action.equals("subplan.approve"))
       allowed = Set.of("REVIEWER_L1");
@@ -224,7 +255,14 @@ public class DemoService {
     else if (action.startsWith("rectification.")
         || action.matches("execution\\.(ack|prepare|report|finish)")) allowed = Set.of("WORKER");
     else if (action.startsWith("run.")) allowed = Set.of("DIRECTOR");
+    else if (action.equals("issue.create")) allowed = Set.of("LEARNER", "INSTRUCTOR");
     else if (action.startsWith("issue.")) allowed = Set.of("INSTRUCTOR", "PLANNER");
+    else if (action.startsWith("simulationProject.")) allowed = Set.of("AUTHOR", "INSTRUCTOR");
+    else if (action.startsWith("simulationTemplate.")) allowed = Set.of("AUTHOR", "INSTRUCTOR");
+    else if (action.startsWith("simulationTopology.") || action.startsWith("simulationPreview."))
+      allowed = Set.of("AUTHOR", "INSTRUCTOR");
+    else if (action.startsWith("curriculum.") || action.startsWith("courseware."))
+      allowed = Set.of("AUTHOR", "INSTRUCTOR");
     else if (action.matches("(asset|scene|topology|template|station|course)\\..*"))
       allowed = Set.of("AUTHOR", "INSTRUCTOR");
     else allowed = Set.of("PLANNER");
@@ -251,7 +289,7 @@ public class DemoService {
 
   public String report(String workspace, String collection, String id) {
     require(
-        Set.of("attempts", "runs", "executions", "comparisons", "evaluations", "archives", "plans")
+        Set.of("attempts", "trainingArchives", "runs", "executions", "comparisons", "evaluations", "archives", "plans")
             .contains(collection),
         "不支持的报告类型");
     ObjectNode s = state(workspace), record = find(s, collection, id);

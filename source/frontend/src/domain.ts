@@ -37,7 +37,7 @@ export const systems: SystemDefinition[] = [
     prefix: "/support",
     icon: "Network",
     eyebrow: "SUPPORT OPERATIONS",
-    sections: ["本系统工作台", "教学训练", "保障筹划", "保障演练", "执行归档"],
+    sections: ["本系统工作台", "资源准备", "教学训练", "保障筹划", "保障演练", "执行归档"],
   },
 ];
 

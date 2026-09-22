@@ -17,7 +17,7 @@ public final class Seed {
             "revision",
             0,
             "schemaVersion",
-            WorkspaceMigration.CURRENT_SCHEMA_VERSION,
+            2,
             "seedVersion",
             "demo-1.0",
             "projectName",
@@ -90,9 +90,11 @@ public final class Seed {
     for (String key :
         new String[] {
           "assets",
+          "curricula",
           "courses",
           "attempts",
           "assignments",
+          "trainingArchives",
           "tasks",
           "plans",
           "resources",
@@ -112,7 +114,12 @@ public final class Seed {
           "histories",
           "documents",
           "comparisons",
-          "evaluations"
+          "evaluations",
+          "simulationProjects",
+          "scenes",
+          "topologies",
+          "systemTemplates",
+          "simulationPreviews"
         }) s.putArray(key);
     String[][] assets = {
       {"ASSET-PUMP", "通用泵组总成", "模型", "FBX", "PUMP-01"},
@@ -316,7 +323,7 @@ public final class Seed {
                 "SEED_DATA",
                 "content",
                 "按十步课程完成模拟操作；四项检查中每项结论必须独立记录。"));
-    return s;
+    return WorkspaceMigration.migrate(s);
   }
 
   public static ArrayNode operations(boolean p2) {

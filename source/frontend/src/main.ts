@@ -15,7 +15,13 @@ const router = createRouter({
     ...legacyRoutes.map((legacy) => ({
       path: legacy.path,
       redirect: (to: any) =>
-        pathFor(legacy.targetId, String(to.params.id || "current")),
+        ({
+          path: pathFor(
+            legacy.targetId,
+            String(("target" in legacy && legacy.target) || to.params.id || "current"),
+          ),
+          query: "query" in legacy ? legacy.query : undefined,
+        }),
     })),
     {
       path: "/not-found",

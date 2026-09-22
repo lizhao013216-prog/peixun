@@ -261,6 +261,61 @@ class BusinessFlowTest {
   }
 
   @Test
+  void duplicateSimulationTemplatePublishCommandCreatesOneVersion() {
+    ObjectNode project =
+        (ObjectNode)
+            service
+                .command(
+                    workspace,
+                    "ADMIN",
+                    request(
+                        "simulationProject.create",
+                        obj(
+                            "domain", "OPERATION",
+                            "name", "幂等模板工程",
+                            "purpose", "验证重复发布命令",
+                            "linkageMode", "NONE")),
+                    "OPERATION")
+                .path("data");
+    service.command(
+        workspace,
+        "ADMIN",
+        request(
+            "simulationProject.save",
+            obj(
+                "id", project.path("id").asText(),
+                "expectedEditRevision", project.path("editRevision").asInt(),
+                "name", project.path("name").asText(),
+                "purpose", project.path("purpose").asText(),
+                "scene",
+                    obj(
+                        "objects",
+                            arr(
+                                obj(
+                                    "id", "TOOL-01",
+                                    "name", "工具对象",
+                                    "assetRef", obj("id", "ASSET-TOOL", "version", 1),
+                                    "x", 20,
+                                    "y", 30,
+                                    "initialState", obj("status", "READY"))),
+                        "environment",
+                            obj("weather", "晴", "light", "日间", "camera", "总览", "material", "标准")))),
+        "OPERATION");
+    ObjectNode publish =
+        request(
+            "simulationTemplate.publish",
+            obj(
+                "projectId", project.path("id").asText(),
+                "usageInstructions", "重复命令只能发布一次",
+                "sharedWith", arr()));
+    publish.put("commandId", "P2C-IDEMPOTENT-PUBLISH");
+    ObjectNode first = service.command(workspace, "ADMIN", publish, "OPERATION");
+    ObjectNode replay = service.command(workspace, "ADMIN", publish, "OPERATION");
+    assertEquals(first.path("data").path("id"), replay.path("data").path("id"));
+    assertEquals(1, state().withArray("systemTemplates").size());
+  }
+
+  @Test
   void authoredTargetActionAndResultDriveLearnerFeedback() throws Exception {
     ObjectNode c = cmd("AUTHOR", "course.create", obj("domain", "OPERATION", "name", "定制教学验证"));
     ArrayNode steps = c.withArray("steps").deepCopy();

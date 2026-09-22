@@ -13,7 +13,7 @@ const color = computed(() =>
             props.status,
           )
         ? "amber"
-        : /RUNNING|READY|ASSIGNED|ISSUED|PLANNED/.test(props.status)
+        : /RUNNING|READY|ASSIGNED|ISSUED|PLANNED|IN_PROGRESS/.test(props.status)
           ? "blue"
           : "gray",
 );

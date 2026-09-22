@@ -7,6 +7,7 @@ import { systemName, type SystemId } from "../domain";
 import Icon from "../components/Icon.vue";
 import Empty from "../components/Empty.vue";
 import TrainingAssignments from "../components/TrainingAssignments.vue";
+import TrainingIssues from "../components/TrainingIssues.vue";
 import TrainingPlayer from "../components/TrainingPlayer.vue";
 
 const props = defineProps<{ page: PageMeta }>();
@@ -44,17 +45,23 @@ function openAttempt(a: any) {
 </script>
 
 <template>
-  <TrainingAssignments v-if="page.feature === 'assignments'" :domain="domain" />
+  <TrainingIssues
+    v-if="page.feature === 'training-issues'"
+    :domain="domain"
+  />
+  <TrainingAssignments
+    v-else-if="page.feature === 'assignments'"
+    :domain="domain"
+  />
   <section
     v-else-if="page.feature === 'training-scope'"
     class="panel empty-state"
   >
     <Icon name="BookOpenCheck" :size="32" />
-    <span class="task-eyebrow">{{ systemName(domain) }} · P1 范围说明</span>
-    <h1>教学训练入口已纳入本系统，但完整业务尚未开放。</h1>
+    <span class="task-eyebrow">{{ systemName(domain) }} · P5 教学闭环</span>
+    <h1>保障教学训练已开放，请从操作课件或培训任务进入。</h1>
     <p>
-      当前阶段只建立独立入口和业务边界，不复用装备维修保障的课程、任务、评价与记录。
-      按执行指南，保障教学训练完整闭环将在 P5 阶段实施。
+      本系统使用独立的课程、任务、评价与记录；训练案例副本不会修改正式保障预案。
     </p>
   </section>
   <template v-else-if="page.feature === 'training-evaluations'">
@@ -114,7 +121,7 @@ function openAttempt(a: any) {
             <tr>
               <th>课程</th>
               <th>评价范围</th>
-              <th>得分</th>
+              <th>{{ domain === "SUPPORT" ? "学习得分" : "得分" }}</th>
               <th>正确率</th>
               <th>错误 / 帮助</th>
               <th>操作</th>
@@ -124,7 +131,11 @@ function openAttempt(a: any) {
             <tr v-for="a in [...results].reverse()" :key="a.id">
               <td>
                 <b>{{ a.courseName }}</b
-                ><small>V{{ a.courseVersion }} · {{ a.id }}</small>
+                ><small>V{{ a.courseVersion }} · {{ a.id }}</small
+                ><small v-if="a.evaluation?.planMetrics"
+                  >方案工期 {{ a.evaluation.planMetrics.finish }} 分钟 · 方案费用
+                  {{ a.evaluation.planMetrics.cost }}</small
+                >
               </td>
               <td>
                 {{
@@ -138,8 +149,8 @@ function openAttempt(a: any) {
               <td>
                 <b>{{ a.score ?? "不适用" }}</b>
               </td>
-              <td>{{ a.scope === "NONE" ? "—" : `${a.correctRate}%` }}</td>
-              <td>{{ a.errors }} / {{ a.helps }}</td>
+              <td>{{ a.scope === "NONE" || a.correctRate == null ? "—" : `${a.correctRate}%` }}</td>
+              <td>{{ a.errors }} / {{ a.helps }}<small v-if="a.technicalFailures">技术故障 {{ a.technicalFailures }} 次（不扣分）</small></td>
               <td>
                 <div class="actions">
                   <button class="text-btn" @click="openAttempt(a)">

@@ -81,6 +81,9 @@ try {
   await dialog
     .getByRole("textbox", { name: "课程名称 *", exact: true })
     .fill("教员制作与学员训练验收");
+  await dialog
+    .getByRole("combobox", { name: "课件契约", exact: true })
+    .selectOption("V2");
   await dialog.getByRole("button", { name: "创建草稿", exact: true }).click();
   await page.locator(".step-fields").waitFor();
   await page

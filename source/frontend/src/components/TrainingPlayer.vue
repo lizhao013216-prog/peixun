@@ -9,6 +9,7 @@ import LessonStep from "./LessonStep.vue";
 import Icon from "./Icon.vue";
 import Badge from "./Badge.vue";
 import Modal from "./Modal.vue";
+import SupportTrainingPanel from "./SupportTrainingPanel.vue";
 const route = useRoute(),
   router = useRouter(),
   s = computed(() => store.data);
@@ -30,13 +31,31 @@ const attempt = computed(() => {
       ) || available.value.at(-1);
 });
 const attemptDomain = computed<SystemId>(() =>
-  attempt.value?.domain === "OPERATION" ? "OPERATION" : "MAINTENANCE",
+  attempt.value?.domain === "SUPPORT"
+    ? "SUPPORT"
+    : attempt.value?.domain === "OPERATION"
+      ? "OPERATION"
+      : "MAINTENANCE",
 );
 const assignmentsPath = computed(() =>
   pathForFeature(attemptDomain.value, "assignments"),
 );
 const course = computed(() =>
+  attempt.value?.courseSnapshot ||
   s.value.courses.find((c: any) => c.id === attempt.value?.courseId),
+);
+const modern = computed(() => attempt.value?.interactionSchemaVersion === 3);
+const trainingObjects = computed(() => course.value?.sceneSnapshot?.objects || []);
+const supportMode = computed(
+  () => attempt.value?.domain === "SUPPORT" && !!attempt.value?.supportTraining,
+);
+const passedCount = computed(() =>
+  supportMode.value
+    ? Object.values(attempt.value?.supportTraining?.checkpoints || {}).filter(Boolean)
+        .length
+    : modern.value
+      ? attempt.value?.passedStepIds?.length || 0
+      : attempt.value?.currentStep || 0,
 );
 const assignment = computed(() =>
   s.value.assignments.find((a: any) => a.id === attempt.value?.assignmentId),
@@ -45,12 +64,14 @@ const lastEvent = computed(() => attempt.value?.events.at(-1));
 const acknowledged = ref("");
 const needsNext = computed(
   () =>
-    attempt.value?.status !== "COMPLETED" &&
-    lastEvent.value?.kind === "PASS" &&
-    acknowledged.value !== lastEvent.value.id,
+    modern.value
+      ? attempt.value?.awaitingContinue === true
+      : attempt.value?.status !== "COMPLETED" &&
+        lastEvent.value?.kind === "PASS" &&
+        acknowledged.value !== lastEvent.value.id,
 );
 const index = computed(() =>
-  Math.max(0, attempt.value?.currentStep - (needsNext.value ? 1 : 0)),
+  Math.max(0, modern.value ? attempt.value?.currentStep || 0 : attempt.value?.currentStep - (needsNext.value ? 1 : 0)),
 );
 const current = computed(() => lessonStep(course.value?.steps[index.value]));
 const confirmed = computed(
@@ -64,7 +85,11 @@ const teacher = computed(
 const feedbackOpen = ref(false),
   rating = ref(4),
   comment = ref(""),
-  recordsOpen = ref(false);
+  recordsOpen = ref(false),
+  issueOpen = ref(false),
+  issueType = ref("CONTENT"),
+  issueName = ref(""),
+  issueDescription = ref("");
 const feedbackDone = computed(() =>
   s.value.feedback.some((f: any) => f.attemptId === attempt.value?.id),
 );
@@ -74,6 +99,7 @@ const resultTitles: Record<string, string> = {
   HELP: "操作提示已打开",
   TECHNICAL_FAILURE: "平台响应失败 · 可重试，不扣分",
 };
+const objectLabel = (id: string) => trainingObjects.value.find((item: any) => item.id === id)?.name || objectName(id);
 const canOperate = computed(
   () =>
     !store.actor.startsWith("LEARNER") ||
@@ -107,8 +133,12 @@ async function submit(payload: any) {
 async function help() {
   await command("training.action", { id: attempt.value.id, kind: "HELP" }, "");
 }
-function next() {
-  acknowledged.value = lastEvent.value.id;
+async function next() {
+  if (modern.value) {
+    await command("training.continue", { id: attempt.value.id }, "已进入下一步");
+  } else {
+    acknowledged.value = lastEvent.value.id;
+  }
 }
 async function useTeacher() {
   try {
@@ -125,6 +155,23 @@ async function feedback() {
     "课程反馈已保存",
   );
   if (r) feedbackOpen.value = false;
+}
+async function createIssue() {
+  const r = await command(
+    "issue.create",
+    {
+      id: attempt.value.id,
+      type: issueType.value,
+      name: issueName.value,
+      description: issueDescription.value,
+    },
+    "训练问题已登记，不影响本次正常完成与归档",
+  );
+  if (r) {
+    issueOpen.value = false;
+    issueName.value = "";
+    issueDescription.value = "";
+  }
 }
 </script>
 <template>
@@ -161,7 +208,7 @@ async function feedback() {
       </div>
       <div class="training-counter">
         <b
-          >{{ attempt.currentStep
+          >{{ passedCount
           }}<small> / {{ course.steps.length }}</small></b
         ><span>步骤已完成</span>
       </div>
@@ -169,12 +216,18 @@ async function feedback() {
     <div class="training-progress">
       <div
         :style="{
-          width: `${(attempt.currentStep / course.steps.length) * 100}%`,
+          width: `${(passedCount / course.steps.length) * 100}%`,
         }"
       ></div>
     </div>
+    <SupportTrainingPanel
+      v-if="supportMode"
+      :attempt="attempt"
+      :assignment="assignment"
+      @issue="issueOpen = true"
+    />
     <section
-      v-if="lastEvent"
+      v-if="lastEvent && !supportMode"
       class="training-feedback"
       :class="lastEvent.kind"
       role="status"
@@ -193,7 +246,7 @@ async function feedback() {
         <p>
           {{ lastEvent.name || lastEvent.step
           }}<template v-if="lastEvent.target">
-            · 选择了{{ objectName(lastEvent.target) }}</template
+            · 选择了{{ objectLabel(lastEvent.target) }}</template
           ><template v-if="lastEvent.actionLabel && lastEvent.kind === 'PASS'">
             · {{ lastEvent.actionLabel }}</template
           >
@@ -208,22 +261,25 @@ async function feedback() {
         </p>
         <small v-if="lastEvent.kind === 'ERROR'"
           >本步进度未前进。{{
-            attempt.scope === "NONE"
+              attempt.scope === "NONE"
               ? "本次为不计分演示。"
-              : "本次错误扣5分，可修正后重试。"
+              : `本次错误扣${course.scoreRule?.errorPenalty ?? 5}分，可修正后重试。`
           }}</small
         ><small v-else-if="lastEvent.kind === 'HELP'">{{
           attempt.scope === "NONE"
             ? "本次为不计分演示。"
-            : "本次主动帮助扣2分。"
+            : `本次主动帮助扣${course.scoreRule?.helpPenalty ?? 2}分。`
         }}</small>
       </div>
       <button v-if="needsNext" class="btn primary" @click="next">
-        继续下一步：{{ course.steps[attempt.currentStep]?.name
+        {{ modern && index + 1 >= course.steps.length ? "完成训练" : `继续下一步：${course.steps[modern ? index + 1 : attempt.currentStep]?.name || "下一步"}`
         }}<Icon name="ArrowRight" :size="16" />
       </button>
     </section>
-    <div v-if="attempt.status === 'COMPLETED'" class="panel training-complete">
+    <div
+      v-if="attempt.status === 'COMPLETED' && !supportMode"
+      class="panel training-complete"
+    >
       <span class="task-eyebrow">训练完成</span>
       <h2>全部步骤已完成，接下来查看成绩与培训证据。</h2>
       <div class="completion-metrics">
@@ -240,11 +296,11 @@ async function feedback() {
           ><span>帮助次数</span>
         </div>
         <div>
-          <b>{{ attempt.correctRate }}%</b><span>正确率（不含帮助）</span>
+          <b>{{ attempt.correctRate == null ? "暂无结果" : `${attempt.correctRate}%` }}</b><span>正确率（不含帮助与技术故障）</span>
         </div>
       </div>
       <p v-if="attempt.scope !== 'NONE'">
-        成绩 = 已通过步骤占比 × 100 − 错误次数 × 5 − 帮助次数 × 2，最低0分。
+        成绩 = 已通过步骤分值 − 错误次数 × {{ course.scoreRule?.errorPenalty ?? 5 }} − 帮助次数 × {{ course.scoreRule?.helpPenalty ?? 2 }}，范围0～{{ course.scoreRule?.total ?? 100 }}分。
       </p>
       <div class="button-row">
         <button class="btn primary" @click="feedbackOpen = true">
@@ -254,6 +310,8 @@ async function feedback() {
           @click="download('attempts', attempt.id)"
         >
           导出训练报告</button
+        ><button class="btn secondary" @click="issueOpen = true">
+          记录可选问题</button
         ><button class="btn secondary" @click="router.push(assignmentsPath)">
           返回我的任务
         </button>
@@ -300,7 +358,7 @@ async function feedback() {
         </button>
       </div>
     </div>
-    <template v-else>
+    <template v-else-if="!supportMode">
       <div v-if="attempt.status === 'PAUSED'" class="info-note warning">
         <b>训练已暂停，当前进度已保存。</b
         ><button
@@ -320,20 +378,20 @@ async function feedback() {
             <li
               v-for="(st, i) in course.steps"
               :key="st.id"
-              :class="{ passed: i < attempt.currentStep, current: i === index }"
+              :class="{ passed: modern ? attempt.passedStepIds?.includes(st.id) : i < attempt.currentStep, current: i === index }"
             >
               <span>{{ Number(i) + 1 }}</span>
               <div>
                 <b>{{ st.name }}</b
                 ><small>{{
-                  i < attempt.currentStep
+                  (modern ? attempt.passedStepIds?.includes(st.id) : i < attempt.currentStep)
                     ? "已通过"
                     : i === attempt.currentStep
                       ? "待完成"
                       : "尚未开始"
                 }}</small>
               </div>
-              <Icon v-if="i < attempt.currentStep" name="Check" :size="16" />
+              <Icon v-if="modern ? attempt.passedStepIds?.includes(st.id) : i < attempt.currentStep" name="Check" :size="16" />
             </li>
           </ol>
         </aside>
@@ -362,6 +420,8 @@ async function feedback() {
           <LessonStep
             :key="`${attempt.id}:${index}`"
             :step="current"
+            :objects="modern ? trainingObjects : undefined"
+            :states="modern ? attempt.runtime?.states : undefined"
             :state="attempt.entityState"
             :free="attempt.mode === 'FREE'"
             :disabled="
@@ -374,7 +434,7 @@ async function feedback() {
           />
           <div class="student-controls">
             <span
-              >已通过 {{ attempt.currentStep }} 步 · 错误
+              >已通过 {{ passedCount }} 步 · 错误
               {{ attempt.errors }} 次 · 帮助 {{ attempt.helps }} 次</span
             >
             <div class="button-row">
@@ -463,11 +523,11 @@ async function feedback() {
           </thead>
           <tbody>
             <tr v-for="ev in attempt.events" :key="ev.id">
-              <td>{{ ev.step }} · {{ ev.name }}</td>
+              <td>{{ ev.stepId || ev.step }} · {{ ev.name }}</td>
               <td>
-                {{ objectName(ev.target) }}<br />{{ ev.actionLabel || ev.kind }}
+                {{ objectLabel(ev.objectId || ev.target) }}<br />{{ ev.actionLabel || ev.actionId || ev.kind }}
               </td>
-              <td>{{ ev.message || resultTitles[ev.kind] }}</td>
+              <td>{{ ev.reason || ev.message || resultTitles[ev.kind] }}<template v-if="ev.scoreDelta"> · 分数 {{ ev.scoreDelta > 0 ? '+' : '' }}{{ ev.scoreDelta }}</template></td>
             </tr>
           </tbody>
         </table>
@@ -498,4 +558,44 @@ async function feedback() {
       </button></template
     ></Modal
   >
+  <Modal
+    v-if="issueOpen"
+    title="登记训练问题（可选）"
+    @close="issueOpen = false"
+  >
+    <div class="form-stack">
+      <div class="info-note">
+        问题登记是训练后的独立处理流程，不影响当前成绩、完成状态和归档。
+      </div>
+      <label class="field"
+        ><span>问题类型</span
+        ><select v-model="issueType">
+          <option value="CONTENT">课程内容问题</option>
+          <option value="LEARNING">学习掌握问题</option>
+          <option value="PLATFORM">平台技术问题</option>
+          <option value="EQUIPMENT_SUPPORT">疑似装备保障问题</option>
+        </select></label
+      >
+      <label class="field"
+        ><span>问题标题</span
+        ><input v-model="issueName" placeholder="简要说明发现的问题" />
+      </label>
+      <label class="field"
+        ><span>补充说明</span
+        ><textarea
+          v-model="issueDescription"
+          placeholder="记录现象、影响和建议；平台问题不会扣减学习成绩"
+        />
+      </label>
+    </div>
+    <template #footer>
+      <button
+        class="btn primary"
+        :disabled="!issueName.trim() || store.busy > 0"
+        @click="createIssue"
+      >
+        提交问题
+      </button>
+    </template>
+  </Modal>
 </template>

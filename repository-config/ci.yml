@@ -28,10 +28,19 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: source/frontend
       - run: node scripts/verify-browser.mjs
+      - run: node scripts/verify-resource-preparation.mjs
+      - run: node scripts/verify-simulation-runtime.mjs
+      - run: node scripts/verify-simulation-templates.mjs
+      - run: node scripts/verify-p2-resource-closure.mjs
+      - run: node scripts/verify-courseware-authoring.mjs
+      - run: node scripts/verify-configuration-driven-training.mjs
+      - run: node scripts/verify-p5-p6.mjs
+      - run: node scripts/verify-p7-three-routes.mjs
       - run: node scripts/verify-training-workflow.mjs
       - run: node scripts/verify-three-systems.mjs
       - run: node scripts/sync-release-package.mjs
       - run: node scripts/verify-release-package.mjs
+      - run: node scripts/verify-p7-delivery.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

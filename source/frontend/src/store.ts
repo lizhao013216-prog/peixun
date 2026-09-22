@@ -23,6 +23,11 @@ export const store = reactive({
     MAINTENANCE: "",
     SUPPORT: "",
   } as Record<SystemId, string>,
+  selectedProjectBySystem: {
+    OPERATION: "",
+    MAINTENANCE: "",
+    SUPPORT: "",
+  } as Record<SystemId, string>,
   selectedRun: "",
   selectedExecution: "",
   selectedArchive: "",
@@ -176,6 +181,11 @@ export async function switchWorkspace(id: string) {
     MAINTENANCE: "",
     SUPPORT: "",
   };
+  store.selectedProjectBySystem = {
+    OPERATION: "",
+    MAINTENANCE: "",
+    SUPPORT: "",
+  };
   store.selectedRun = store.selectedExecution = store.selectedArchive = "";
   localStorage.setItem("peixun.workspace", id);
   await refresh();
@@ -194,13 +204,13 @@ export async function newWorkspace(name: string, clone = false) {
     notify(e.message, "error");
   }
 }
-export async function upload(file: File) {
+export async function upload(file: File, domain: SystemId) {
   const f = new FormData();
   f.append("file", file);
   store.busy++;
   try {
     const r = await request(
-      `/uploads?workspace=${encodeURIComponent(store.workspace)}`,
+      `/uploads?workspace=${encodeURIComponent(store.workspace)}&domain=${encodeURIComponent(domain)}`,
       { method: "POST", body: f },
     );
     update(r.state);
@@ -261,7 +271,7 @@ export async function setScopeDomain(domain: SystemId | "") {
 export async function downloadAsset(asset: any) {
   try {
     const r = await fetch(
-      `/api/demo/assets/${encodeURIComponent(asset.id)}/file?workspace=${encodeURIComponent(store.workspace)}`,
+      `/api/demo/assets/${encodeURIComponent(asset.id)}/file?workspace=${encodeURIComponent(store.workspace)}${store.scopeDomain ? `&domain=${encodeURIComponent(store.scopeDomain)}` : ""}`,
       { headers: { Authorization: `Bearer ${store.token}` } },
     );
     if (!r.ok) throw new Error("文件读取失败");

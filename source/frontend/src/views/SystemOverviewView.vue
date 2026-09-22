@@ -23,6 +23,35 @@ const attempts = computed(() =>
 const completed = computed(() =>
   attempts.value.filter((item: any) => item.status === "COMPLETED"),
 );
+const resourceCards = computed(() => [
+  {
+    label: "可用素材",
+    value: s.value.assets.length,
+    suffix: "项",
+    hint: "本系统自有与已授权素材",
+    icon: "Boxes",
+    color: "blue",
+    feature: "assets",
+  },
+  {
+    label: "仿真工程",
+    value: s.value.simulationProjects.length,
+    suffix: "个",
+    hint: "独立场景与对象实例",
+    icon: "Network",
+    color: "teal",
+    feature: "simulation-projects",
+  },
+  {
+    label: "系统模板",
+    value: s.value.systemTemplates.length,
+    suffix: "个",
+    hint: "不可变版本与修订复用",
+    icon: "Copy",
+    color: "purple",
+    feature: "simulation-templates",
+  },
+]);
 const trainingCards = computed(() => [
   {
     label: "课件版本",
@@ -107,13 +136,37 @@ function go(feature: string) {
       <span class="task-eyebrow">{{ system.name }} · 本系统工作台</span>
       <h2>从本系统上下文进入任务，不带入其他系统的选择。</h2>
       <p v-if="page.system === 'SUPPORT'">
-        正式保障任务、预案、演练、模拟施工和成果归档保持原有业务链；教学训练入口当前明确展示阶段范围。
+        正式保障任务、预案、演练、模拟施工和成果归档保持原有业务链；教学训练使用独立案例副本和学习成绩。
       </p>
       <p v-else>
         课件制作、任务分配、学员训练、培训评价和训练归档均按当前系统领域筛选。
       </p>
     </div>
   </section>
+  <div class="section-label"><span>资源准备</span><span>素材、独立仿真工程与系统模板</span></div>
+  <section class="stat-grid">
+    <button v-for="item in resourceCards" :key="item.label" class="stat-card" @click="go(item.feature)">
+      <div class="stat-top"><span>{{ item.label }}</span><span class="stat-icon" :class="item.color"><Icon :name="item.icon" :size="20" /></span></div>
+      <div class="stat-number">{{ item.value }}<small>{{ item.suffix }}</small></div>
+      <div class="stat-foot">{{ item.hint }}<Icon name="ArrowUpRight" :size="15" /></div>
+    </button>
+  </section>
+  <template v-if="page.system === 'SUPPORT'">
+    <div class="section-label"><span>教学训练</span><span>课件、学员任务与学习成绩，不计入正式演练次数</span></div>
+    <section class="stat-grid">
+      <button v-for="item in trainingCards" :key="item.label" class="stat-card" @click="go(item.feature)">
+        <div class="stat-top"><span>{{ item.label }}</span><span class="stat-icon" :class="item.color"><Icon :name="item.icon" :size="20" /></span></div>
+        <div class="stat-number">{{ item.value }}<small>{{ item.suffix }}</small></div>
+        <div class="stat-foot">{{ item.hint }}<Icon name="ArrowUpRight" :size="15" /></div>
+      </button>
+      <button class="stat-card" @click="go('training-issues')">
+        <div class="stat-top"><span>训练问题</span><span class="stat-icon amber"><Icon name="MessageSquareWarning" :size="20" /></span></div>
+        <div class="stat-number">{{ s.issues.filter((item: any) => item.domain === 'SUPPORT').length }}<small>项</small></div>
+        <div class="stat-foot">可选分流，不影响正常归档<Icon name="ArrowUpRight" :size="15" /></div>
+      </button>
+    </section>
+  </template>
+  <div class="section-label"><span>{{ page.system === 'SUPPORT' ? '保障业务' : '教学训练' }}</span><span>当前系统业务数据</span></div>
   <section class="stat-grid">
     <button
       v-for="item in cards"
@@ -136,20 +189,17 @@ function go(feature: string) {
     </button>
   </section>
   <section v-if="page.system === 'SUPPORT'" class="panel panel-body">
-    <div class="info-note warning">
-      <Icon name="CircleAlert" :size="20" />
+    <div class="info-note">
+      <Icon name="BookOpenCheck" :size="20" />
       <div>
-        <b>保障教学训练仍处于 P1 领域入口阶段</b>
-        <p>
-          本阶段未开放保障课件创建、学员练习副本和教学评分；这些能力按执行指南
-          P5 实施。现有正式保障业务入口均保持可用。
-        </p>
+        <b>保障业务与教学训练双主线独立运行</b>
+        <p>学员只操作本人训练副本；方案工期/费用与学习成绩分别计算。正式保障任务和预案不会被训练修改。</p>
       </div>
     </div>
     <div class="button-row">
       <button class="btn primary" @click="go('tasks')">进入保障任务</button>
-      <button class="btn secondary" @click="go('training-scope')">
-        查看教学训练范围
+      <button class="btn secondary" @click="go('coursewares')">
+        制作保障教学课件
       </button>
     </div>
   </section>

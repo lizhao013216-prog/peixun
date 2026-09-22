@@ -33,7 +33,13 @@ const isEditor = computed(() =>
 );
 const isCourse = computed(() => props.page.feature === "coursewares");
 async function doCourse(action: string, c: any) {
-  await command(action, { id: c.id });
+  const actual = c.interactionSchemaVersion === 3
+    ? action.replace("course.", "courseware.")
+    : action;
+  await command(actual, {
+    id: c.id,
+    ...(actual === "courseware.return" ? { comment: "请按审核意见完善课件内容" } : {}),
+  });
 }
 async function saveScene() {
   await command(

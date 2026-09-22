@@ -40,14 +40,45 @@ const canReview = computed(
     course.value?.createdBy !== store.actor,
 );
 const canAssign = computed(() => ["INSTRUCTOR", "ADMIN"].includes(role.value));
+const modern = computed(() => course.value?.interactionSchemaVersion === 3);
+const templates = computed(() =>
+  (s.value.systemTemplates || []).filter(
+    (item: any) => item.status === "PUBLISHED" && item.sceneSnapshot,
+  ),
+);
+const boundTemplate = computed(() => {
+  const ref = course.value?.environment?.templateRef;
+  return templates.value.find(
+    (item: any) => item.id === ref?.id && item.version === ref?.version,
+  );
+});
+const curriculum = computed(() =>
+  (s.value.curricula || []).find((item: any) => item.id === course.value?.curriculumId),
+);
+const unit = computed(() =>
+  curriculum.value?.units?.find((item: any) => item.id === course.value?.unitId),
+);
+const availableObjects = computed(() =>
+  modern.value ? boundTemplate.value?.sceneSnapshot?.objects || [] : trainingObjects,
+);
+const objectLabel = (id: string) =>
+  availableObjects.value.find((item: any) => item.id === id)?.name || objectName(id);
 const creating = ref(false),
   preview = ref(false),
   assigning = ref(false),
   previewResult = ref<any>(null),
-  stepIndex = ref(0);
-const draft = ref<any>({ name: "", description: "", steps: [] }),
+  stepIndex = ref(0),
+  draggedStep = ref(-1),
+  validationReport = ref<any>(null);
+const draft = ref<any>({ name: "", description: "", mode: "GUIDED", scoreRule: {}, steps: [] }),
   newName = ref(""),
   newDescription = ref(""),
+  curriculumName = ref(""),
+  curriculumObjective = ref(""),
+  unitName = ref("第一课时"),
+  templateId = ref(""),
+  rebindTemplateId = ref(""),
+  contractVersion = ref("V3"),
   requestId = ref(""),
   learner = ref("LEARNER_A"),
   reviewComment = ref("");
@@ -61,14 +92,42 @@ const editable = computed(
   () => course.value?.status === "DRAFT" && canEdit.value,
 );
 const current = computed(() => draft.value.steps[stepIndex.value]);
+const currentObject = computed(() =>
+  availableObjects.value.find((item: any) => item.id === current.value?.target),
+);
+const currentActions = computed(() => currentObject.value?.actions || []);
+const currentAction = computed(() =>
+  currentActions.value.find((item: any) => item.id === current.value?.actionId),
+);
+const conditionObject = computed(() =>
+  availableObjects.value.find((item: any) => item.id === current.value?.precondition?.objectId),
+);
+const conditionFields = computed(() => conditionObject.value?.stateFields || []);
+const conditionField = computed(() =>
+  conditionFields.value.find((item: any) => item.id === current.value?.precondition?.field),
+);
 const issues = computed(() =>
-  draft.value.steps.flatMap((st: any, i: number) =>
-    ["name", "description", "target", "actionLabel", "expectedResult"]
+  draft.value.steps.flatMap((st: any, i: number) => {
+    const missing = ["name", "description", "target", "actionLabel", "expectedResult"]
       .filter((k) => !String(st[k] || "").trim())
       .map(
         (k) =>
           `第${i + 1}步缺少${({ name: "步骤名称", description: "操作说明", target: "操作对象", actionLabel: "动作按钮文字", expectedResult: "预期结果" } as any)[k]}`,
-      ),
+      );
+    if (modern.value) {
+      if (!availableObjects.value.some((item: any) => item.id === st.target))
+        missing.push(`第${i + 1}步引用的对象不在绑定模板中`);
+      const object = availableObjects.value.find((item: any) => item.id === st.target);
+      if (!object?.actions?.some((item: any) => item.id === st.actionId))
+        missing.push(`第${i + 1}步尚未选择有效设备动作`);
+      if (!(Number(st.points) > 0)) missing.push(`第${i + 1}步分值必须大于0`);
+    }
+    return missing;
+  }).concat(
+    modern.value && draft.value.steps.reduce((sum: number, item: any) => sum + Number(item.points || 0), 0) !== Number(draft.value.scoreRule?.total || 0)
+      ? ["步骤分值合计必须等于课件总分"]
+      : [],
+    modern.value ? course.value?.environmentIssues || [] : [],
   ),
 );
 const dirty = computed(
@@ -77,7 +136,9 @@ const dirty = computed(
     JSON.stringify({
       name: course.value.name,
       description: course.value.description,
-      steps: course.value.steps.map(lessonStep),
+      mode: course.value.mode || "GUIDED",
+      scoreRule: course.value.scoreRule || {},
+      steps: modern.value ? course.value.steps : course.value.steps.map(lessonStep),
     }) !== JSON.stringify(draft.value),
 );
 const phase = computed(() =>
@@ -91,7 +152,11 @@ const phase = computed(() =>
           ? 4
           : 3,
 );
-const stages = ["建立课程", "编辑与预览", "独立审核", "发布课件", "分配并训练"];
+const stages = computed(() =>
+  modern.value
+    ? ["建立课程", "编辑与预览", "独立审核", "发布课件", "分配并训练"]
+    : ["建立课程", "编辑与预览", "独立审核", "发布课件", "分配并训练"],
+);
 const stageCopy = computed(() => {
   const status = course.value?.status;
   if (status === "DRAFT")
@@ -123,7 +188,7 @@ const stageCopy = computed(() => {
   if (status === "PUBLISHED")
     return [
       "课件已发布，下一步分配培训任务",
-      "选择学员并分配任务。学员将在“培训任务”看到课程，完成后由教员确认证据。",
+      modern.value ? "本版本的环境、步骤、评分和设备能力已冻结；当前不会落入旧训练器。" : "选择学员并分配任务。学员将在“培训任务”看到课程，完成后由教员确认证据。",
     ];
   return [
     "先建立一门课程",
@@ -135,7 +200,11 @@ function sync() {
     draft.value = {
       name: course.value.name,
       description: course.value.description,
-      steps: course.value.steps.map(lessonStep),
+      mode: course.value.mode || "GUIDED",
+      scoreRule: JSON.parse(JSON.stringify(course.value.scoreRule || { total: 100, errorPenalty: 5, helpPenalty: 2 })),
+      steps: modern.value
+        ? JSON.parse(JSON.stringify(course.value.steps))
+        : course.value.steps.map(lessonStep),
     };
   stepIndex.value = 0;
 }
@@ -169,24 +238,51 @@ function newCourse() {
     return;
   }
   newName.value =
-    props.domain === "OPERATION" ? "泵组操作与异常识别" : "泵组维修技能培训";
+    props.domain === "SUPPORT"
+      ? "泵组保障方案编制与延迟事件处置"
+      : props.domain === "OPERATION"
+        ? "泵组操作与异常识别"
+        : "泵组维修技能培训";
   newDescription.value =
-    props.domain === "OPERATION"
+    props.domain === "SUPPORT"
+      ? "掌握任务理解、资源配置、方案编制、计算验证、事件处置和复盘提交。"
+      : props.domain === "OPERATION"
       ? "掌握泵组场景确认、设备联动、异常识别与记录提交流程。"
       : "掌握维修准备、部件识别、模拟操作、检测与训练记录提交流程。";
+  curriculumName.value = newName.value;
+  curriculumObjective.value = newDescription.value;
+  unitName.value = "第一课时";
+  templateId.value = templates.value[0]?.id || "";
+  contractVersion.value = "V3";
   requestId.value = "";
   creating.value = true;
 }
 async function create() {
+  const isModern = contractVersion.value === "V3";
+  if (isModern && !templateId.value) {
+    notify("请先在仿真系统模板库发布一个可用模板", "error");
+    return;
+  }
   const r = await command(
-    "course.create",
-    {
-      domain: props.domain,
-      name: newName.value,
-      description: newDescription.value,
-      requestId: requestId.value,
-    },
-    "课程草稿已创建",
+    isModern ? "courseware.create" : "course.create",
+    isModern
+      ? {
+          domain: props.domain,
+          curriculumName: curriculumName.value,
+          curriculumObjective: curriculumObjective.value,
+          unitName: unitName.value,
+          name: newName.value,
+          description: newDescription.value,
+          templateId: templateId.value,
+          stepCount: props.domain === "SUPPORT" ? 6 : 5,
+        }
+      : {
+          domain: props.domain,
+          name: newName.value,
+          description: newDescription.value,
+          requestId: requestId.value,
+        },
+    isModern ? "V3课件草稿已创建" : "兼容课件草稿已创建",
   );
   if (r) {
     store.selectedCourseBySystem[props.domain] = r.id;
@@ -195,13 +291,15 @@ async function create() {
   }
 }
 async function save() {
-  if (!draft.value.name.trim() || issues.value.length) {
+  if (!draft.value.name.trim() || (!modern.value && issues.value.length)) {
     notify(issues.value[0] || "请填写课程名称", "error");
     return false;
   }
   const r = await command(
-    "course.save",
-    { id: course.value.id, ...draft.value },
+    modern.value ? "courseware.save" : "course.save",
+    modern.value
+      ? { id: course.value.id, expectedEditRevision: course.value.editRevision, ...draft.value }
+      : { id: course.value.id, ...draft.value },
     "课程内容已保存",
   );
   return !!r;
@@ -209,24 +307,40 @@ async function save() {
 async function submit() {
   if (await save())
     await command(
-      "course.submit",
+      modern.value ? "courseware.submit" : "course.submit",
       { id: course.value.id },
       "课程已提交，等待独立审核",
     );
 }
 async function openPreview() {
   if (course.value.status === "DRAFT" && dirty.value && !(await save())) return;
+  if (modern.value) {
+    validationReport.value = await command("courseware.validate", { id: course.value.id }, "");
+    if (!validationReport.value?.valid) {
+      notify(validationReport.value?.issues?.[0] || "课件还不能预览", "error");
+      return;
+    }
+  }
   previewResult.value = null;
   preview.value = true;
 }
-function tryPreview(p: any) {
+async function tryPreview(p: any) {
   const st = current.value;
+  if (modern.value && p.target === st.target && p.actionId === st.actionId) {
+    const result = await command("courseware.preview", { id: course.value.id, stepId: st.id }, "");
+    if (result)
+      previewResult.value = {
+        ok: result.passed,
+        message: result.event?.reason || st.expectedResult,
+      };
+    return;
+  }
   previewResult.value = {
     ok: p.target === st.target && p.actionId === st.actionId,
     message:
       p.target === st.target && p.actionId === st.actionId
         ? st.expectedResult
-        : `对象不正确：请选择${objectName(st.target)}，当前选择${objectName(p.target)}。`,
+        : `对象不正确：请选择${objectLabel(st.target)}，当前选择${objectLabel(p.target)}。`,
   };
 }
 async function assign() {
@@ -239,7 +353,7 @@ async function assign() {
 }
 async function revise() {
   const r = await command(
-    "course.revise",
+    modern.value ? "courseware.revise" : "course.revise",
     { id: course.value.id },
     "已创建独立修订草稿",
   );
@@ -248,6 +362,77 @@ async function revise() {
     router.replace(pathForFeature(props.domain, "coursewares", r.id));
   }
 }
+function addStep() {
+  draft.value.steps.push({ id: `STEP-${crypto.randomUUID()}`, name: `步骤${draft.value.steps.length + 1}`, description: "", target: "", actionId: "", actionLabel: "", parameters: {}, precondition: null, completion: { kind: "ACTION_SUCCEEDED" }, expectedResult: "", points: 0, mode: draft.value.mode || "GUIDED" });
+  stepIndex.value = draft.value.steps.length - 1;
+}
+function copyStep() {
+  if (!current.value) return;
+  const copy = JSON.parse(JSON.stringify(current.value));
+  copy.id = `STEP-${crypto.randomUUID()}`;
+  copy.name = `${copy.name} · 副本`;
+  draft.value.steps.splice(stepIndex.value + 1, 0, copy);
+  stepIndex.value++;
+}
+function deleteStep() {
+  if (!current.value || !confirm(`删除“${current.value.name}”会同时移除该步骤的分值和条件，是否继续？`)) return;
+  draft.value.steps.splice(stepIndex.value, 1);
+  stepIndex.value = Math.max(0, Math.min(stepIndex.value, draft.value.steps.length - 1));
+}
+function moveStep(offset: number) {
+  const target = stepIndex.value + offset;
+  if (target < 0 || target >= draft.value.steps.length) return;
+  const [item] = draft.value.steps.splice(stepIndex.value, 1);
+  draft.value.steps.splice(target, 0, item);
+  stepIndex.value = target;
+}
+function dropStep(target: number) {
+  if (draggedStep.value < 0 || draggedStep.value === target) return;
+  const [item] = draft.value.steps.splice(draggedStep.value, 1);
+  draft.value.steps.splice(target, 0, item);
+  stepIndex.value = target;
+  draggedStep.value = -1;
+}
+function selectTarget() {
+  if (!modern.value || !current.value) return;
+  current.value.actionId = "";
+  current.value.actionLabel = "";
+  current.value.parameters = {};
+}
+function selectAction() {
+  if (!modern.value || !current.value) return;
+  current.value.actionLabel = currentAction.value?.label || "";
+  current.value.parameters = {};
+  for (const parameter of currentAction.value?.parameters || [])
+    current.value.parameters[parameter.id] = parameter.valueType === "BOOLEAN" ? false : parameter.valueType === "NUMBER" ? 0 : "";
+}
+function addCondition() {
+  const object = currentObject.value || availableObjects.value[0];
+  const field = object?.stateFields?.[0];
+  if (!object || !field) {
+    notify("当前模板对象没有可用于前置条件的状态字段", "error");
+    return;
+  }
+  current.value.precondition = {
+    objectId: object.id,
+    field: field.id,
+    operator: "EQ",
+    value: field.valueType === "BOOLEAN" ? false : field.valueType === "NUMBER" ? 0 : "READY",
+  };
+}
+function selectConditionObject() {
+  const field = conditionFields.value[0];
+  current.value.precondition.field = field?.id || "";
+  current.value.precondition.value = field?.valueType === "BOOLEAN" ? false : field?.valueType === "NUMBER" ? 0 : "";
+}
+function selectConditionField() {
+  current.value.precondition.value = conditionField.value?.valueType === "BOOLEAN" ? false : conditionField.value?.valueType === "NUMBER" ? 0 : "";
+}
+async function rebind() {
+  if (!rebindTemplateId.value || rebindTemplateId.value === boundTemplate.value?.id) return;
+  const result = await command("courseware.rebind", { id: course.value.id, expectedEditRevision: course.value.editRevision, templateId: rebindTemplateId.value }, "课件环境已更换，请处理受影响步骤");
+  if (result?.environmentIssues?.length) notify(result.environmentIssues[0], "error");
+}
 </script>
 <template>
   <section class="business-intro">
@@ -255,7 +440,7 @@ async function revise() {
       <span class="task-eyebrow">教员工作区 · {{ systemName(domain) }}</span>
       <h2>把教学目标变成学员能照着完成的步骤。</h2>
       <p>
-        一门课依次经过编辑、预览、审核、发布和任务分配。当前状态与下一项操作始终显示在这里。
+        V3课件显式绑定已发布仿真模板，可自由编排步骤并冻结发布版本；旧课件继续走兼容流程。
       </p>
     </div>
     <button
@@ -265,7 +450,7 @@ async function revise() {
       @click="newCourse"
     >
       <Icon name="Plus" :size="17" />{{
-        domain === "OPERATION" ? "新建操作课程" : "新建维修课件"
+        domain === "OPERATION" ? "新建操作课件" : "新建维修课件"
       }}</button
     ><button v-else class="btn primary" @click="useRole('AUTHOR')">
       以制作教员进入
@@ -323,7 +508,7 @@ async function revise() {
           :disabled="store.busy > 0"
           @click="
             command(
-              'course.approve',
+              modern ? 'courseware.approve' : 'course.approve',
               { id: course.id },
               '审核已通过，下一步发布课件',
             )
@@ -339,9 +524,9 @@ async function revise() {
           :disabled="store.busy > 0"
           @click="
             command(
-              'course.publish',
+              modern ? 'courseware.publish' : 'course.publish',
               { id: course.id },
-              '已开始发布，请等待构建结果',
+              modern ? 'V3课件已发布并冻结快照' : '已开始发布，请等待构建结果',
             )
           "
         >
@@ -381,9 +566,7 @@ async function revise() {
     <Icon name="BookOpen" :size="36" />
     <h3>先填写课程名称和教学目标</h3>
     <p>
-      系统提供可编辑的{{
-        domain === "OPERATION" ? 8 : 10
-      }}步模板，你可以修改操作说明、目标对象、按钮文字和预期结果。
+      先在仿真系统模板库发布环境，再建立课程、课时和可自由增删排序的V3课件步骤。
     </p>
     <button v-if="canEdit" class="btn primary" @click="newCourse">
       新建课程
@@ -404,7 +587,7 @@ async function revise() {
         :disabled="!reviewComment.trim() || store.busy > 0"
         @click="
           command(
-            'course.return',
+            modern ? 'courseware.return' : 'course.return',
             { id: course.id, comment: reviewComment },
             '已退回制作教员修改',
           )
@@ -412,6 +595,13 @@ async function revise() {
       >
         退回修改
       </button>
+    </section>
+    <section v-if="modern && course.status === 'PUBLISHED'" class="info-note course-handoff">
+      <Icon name="ShieldCheck" :size="24" />
+      <div>
+        <b>V3发布快照已冻结</b>
+        <p>环境、步骤、评分和设备能力已冻结为发布快照；新任务会按此版本独立运行，后续修订不会改写已分配任务。</p>
+      </div>
     </section>
     <section v-if="assigned.length" class="info-note course-handoff">
       <Icon name="Users" :size="24" />
@@ -449,6 +639,27 @@ async function revise() {
         </label>
       </div>
     </section>
+    <section v-if="modern" class="panel courseware-environment">
+      <div class="panel-header">
+        <div><h3>课程、课时与仿真环境</h3><p>环境只能通过明确改绑操作更换，普通保存不会读取全局场景。</p></div>
+        <span class="pill">交互契约 V3</span>
+      </div>
+      <div class="panel-body template-facts">
+        <article><span>课程</span><b>{{ curriculum?.name }}</b><small>{{ curriculum?.objective }}</small></article>
+        <article><span>课时</span><b>{{ unit?.name }}</b><small>{{ unit?.objective }}</small></article>
+        <article><span>绑定模板</span><b>{{ boundTemplate?.name }}</b><small>{{ boundTemplate?.id }} · V{{ boundTemplate?.version }}</small></article>
+        <article><span>环境摘要</span><b>{{ availableObjects.length }} 个对象</b><small>{{ boundTemplate?.linkageMode === 'NONE' ? '不使用设备联动' : `${boundTemplate?.connectionCount || 0}连接 / ${boundTemplate?.ruleCount || 0}规则` }}</small></article>
+      </div>
+      <div class="panel-body template-columns">
+        <div><h4>冻结引用</h4><div class="relation-list"><div class="relation-row"><b>场景</b><span>{{ course.environment.sceneRef.id }} · V{{ course.environment.sceneRef.version }}</span></div><div class="relation-row"><b>关系</b><span>{{ course.environment.topologyRef ? `${course.environment.topologyRef.id} · V${course.environment.topologyRef.version}` : '本模板不使用设备联动' }}</span></div></div></div>
+        <div><h4>素材依赖版本</h4><div class="relation-list"><div v-for="dependency in boundTemplate?.dependencies || []" :key="`${dependency.assetRef.id}-${dependency.assetRef.version}`" class="relation-row"><b>{{ dependency.name }}</b><span>{{ dependency.assetRef.id }} · V{{ dependency.assetRef.version }}</span></div></div></div>
+      </div>
+      <div v-if="editable" class="panel-body environment-rebind">
+        <label class="field"><span>显式更换模板版本</span><select v-model="rebindTemplateId"><option value="">选择其他已发布模板</option><option v-for="item in templates.filter((item: any) => item.id !== boundTemplate?.id)" :key="item.id" :value="item.id">{{ item.name }} · V{{ item.version }}</option></select></label>
+        <button class="btn secondary" :disabled="!rebindTemplateId || store.busy > 0" @click="rebind">检查影响并改绑</button>
+      </div>
+      <div v-if="course.environmentIssues?.length" class="info-note warning">{{ course.environmentIssues[0] }}。系统不会自动替换为其他对象或动作。</div>
+    </section>
     <section class="panel course-step-editor">
       <div class="panel-header">
         <div>
@@ -462,9 +673,19 @@ async function revise() {
         >
           <Icon name="Play" :size="16" />预览学员视角
         </button>
+        <div v-if="modern && editable" class="button-row">
+          <button class="btn secondary" @click="addStep"><Icon name="Plus" :size="15" />新增步骤</button>
+          <button class="btn secondary" :disabled="!current" @click="copyStep">复制步骤</button>
+          <button class="btn secondary danger" :disabled="!current" @click="deleteStep">删除步骤</button>
+        </div>
       </div>
       <div v-if="issues.length" class="info-note warning">
         {{ issues[0] }}。完善后才能提交审核和预览。
+      </div>
+      <div v-if="modern" class="panel-body form-grid score-rule-fields">
+        <label class="field"><span>课件总分</span><input v-model.number="draft.scoreRule.total" type="number" min="1" :disabled="!editable" /></label>
+        <label class="field"><span>每次错误扣分</span><input v-model.number="draft.scoreRule.errorPenalty" type="number" min="0" :disabled="!editable" /></label>
+        <label class="field"><span>每次帮助扣分</span><input v-model.number="draft.scoreRule.helpPenalty" type="number" min="0" :disabled="!editable" /></label>
       </div>
       <div class="course-editor-body">
         <nav aria-label="教学步骤">
@@ -472,6 +693,10 @@ async function revise() {
             v-for="(st, i) in draft.steps"
             :key="st.id"
             :class="{ active: stepIndex === i }"
+            :draggable="modern && editable"
+            @dragstart="draggedStep = Number(i)"
+            @dragover.prevent
+            @drop="dropStep(Number(i))"
             @click="stepIndex = Number(i)"
           >
             <span>{{ Number(i) + 1 }}</span
@@ -493,20 +718,45 @@ async function revise() {
             />
           </label>
           <div class="form-grid">
-            <label class="field"
-              ><span>正确的操作对象</span
-              ><select v-model="current.target" :disabled="!editable">
-                <option v-for="o in trainingObjects" :key="o.id" :value="o.id">
+          <label class="field"
+            ><span>正确的操作对象</span
+              ><select v-model="current.target" :disabled="!editable" @change="selectTarget">
+                <option value="">请选择模板中的对象</option>
+                <option v-for="o in availableObjects" :key="o.id" :value="o.id">
                   {{ o.name }} · {{ o.id }}
                 </option>
               </select></label
-            ><label class="field"
+            ><label v-if="modern" class="field"><span>实际设备动作</span><select v-model="current.actionId" :disabled="!editable || !current.target" @change="selectAction"><option value="">请选择有限动作</option><option v-for="action in currentActions" :key="action.id" :value="action.id">{{ action.label }} · {{ action.id }}</option></select></label>
+            <label class="field"
               ><span>学员看到的动作按钮文字</span
               ><input
                 v-model="current.actionLabel"
                 :disabled="!editable"
                 placeholder="例如：确认维修训练任务"
             /></label>
+          </div>
+          <div v-if="modern && currentAction?.parameters?.length" class="form-grid parameter-fields">
+            <label v-for="parameter in currentAction.parameters" :key="parameter.id" class="field"><span>动作参数 · {{ parameter.id }}</span>
+              <select v-if="parameter.valueType === 'BOOLEAN'" v-model="current.parameters[parameter.id]" :disabled="!editable"><option :value="true">是</option><option :value="false">否</option></select>
+              <input v-else-if="parameter.valueType === 'NUMBER'" v-model.number="current.parameters[parameter.id]" type="number" :disabled="!editable" />
+              <input v-else v-model="current.parameters[parameter.id]" :disabled="!editable" />
+            </label>
+          </div>
+          <div v-if="modern" class="form-grid">
+            <label class="field"><span>本步分值</span><input v-model.number="current.points" type="number" min="1" :disabled="!editable" /></label>
+            <label class="field"><span>教学模式</span><select v-model="current.mode" :disabled="!editable"><option value="GUIDED">引导</option><option value="FREE">自由</option><option value="DEMONSTRATION">演示</option></select></label>
+          </div>
+          <div v-if="modern" class="step-condition-editor">
+            <div class="rule-card-head"><div><Icon name="GitBranch" :size="18" /><b>前置状态条件（可选）</b></div><button v-if="editable && !current.precondition" class="text-btn" @click="addCondition">添加条件</button><button v-else-if="editable" class="text-btn danger" @click="current.precondition = null">移除条件</button></div>
+            <div v-if="current.precondition" class="rule-sentence">
+              <select v-model="current.precondition.objectId" :disabled="!editable" @change="selectConditionObject"><option v-for="item in availableObjects" :key="item.id" :value="item.id">{{ item.name }}</option></select>
+              <select v-model="current.precondition.field" :disabled="!editable" @change="selectConditionField"><option v-for="field in conditionFields" :key="field.id" :value="field.id">{{ field.id }}</option></select>
+              <select v-model="current.precondition.operator" :disabled="!editable"><option value="EQ">等于</option><option value="NE">不等于</option><option v-if="conditionField?.valueType === 'NUMBER'" value="LT">小于</option><option v-if="conditionField?.valueType === 'NUMBER'" value="GTE">大于等于</option></select>
+              <select v-if="conditionField?.valueType === 'BOOLEAN'" v-model="current.precondition.value" :disabled="!editable"><option :value="true">是</option><option :value="false">否</option></select>
+              <input v-else-if="conditionField?.valueType === 'NUMBER'" v-model.number="current.precondition.value" type="number" :disabled="!editable" />
+              <input v-else v-model="current.precondition.value" :disabled="!editable" />
+            </div>
+            <p v-else class="note-caption">无前置状态条件；完成判断固定为“所选有限动作由P2规则服务执行成功”。</p>
           </div>
           <label class="field"
             ><span>操作成功后显示什么结果</span
@@ -515,7 +765,7 @@ async function revise() {
           <div class="step-rule-summary">
             <Icon name="CircleCheck" :size="20" /><span
               >通过条件：按顺序选择<strong>{{
-                objectName(current.target)
+                objectLabel(current.target)
               }}</strong
               >，执行<strong>{{ current.actionLabel }}</strong
               >。选择错误对象会保留本步并反馈原因。</span
@@ -525,15 +775,15 @@ async function revise() {
             <button
               class="btn secondary"
               :disabled="stepIndex === 0"
-              @click="stepIndex--"
+              @click="modern && editable ? moveStep(-1) : stepIndex--"
             >
-              上一个步骤</button
+              {{ modern && editable ? '上移步骤' : '上一个步骤' }}</button
             ><button
               class="btn secondary"
               :disabled="stepIndex === draft.steps.length - 1"
-              @click="stepIndex++"
+              @click="modern && editable ? moveStep(1) : stepIndex++"
             >
-              下一个步骤</button
+              {{ modern && editable ? '下移步骤' : '下一个步骤' }}</button
             ><button
               v-if="editable"
               class="btn primary"
@@ -556,14 +806,21 @@ async function revise() {
   </template>
   <Modal
     v-if="creating"
-    :title="domain === 'OPERATION' ? '新建操作课程' : '新建维修课件'"
+    :title="domain === 'OPERATION' ? '新建操作课件' : '新建维修课件'"
     @close="creating = false"
     ><div class="form-stack">
       <label class="field"
         ><span>课程名称 *</span><input v-model="newName" /></label
       ><label class="field"
         ><span>教学目标 *</span><textarea v-model="newDescription" /></label
-      ><label v-if="domain === 'MAINTENANCE'" class="field"
+      ><label class="field"><span>课件契约</span><select v-model="contractVersion"><option value="V3">V3 · 绑定模板与自由步骤</option><option value="V2">V2 · 原训练兼容课件</option></select></label>
+      <template v-if="contractVersion === 'V3'">
+        <label class="field"><span>课程组织名称 *</span><input v-model="curriculumName" /></label>
+        <label class="field"><span>应掌握的能力 *</span><textarea v-model="curriculumObjective" /></label>
+        <label class="field"><span>课时名称 *</span><input v-model="unitName" /></label>
+        <label class="field"><span>仿真环境模板 *</span><select v-model="templateId"><option value="">请选择已发布模板</option><option v-for="item in templates" :key="item.id" :value="item.id">{{ item.name }} · V{{ item.version }} · {{ item.sceneSnapshot.objects.length }}对象</option></select></label>
+      </template>
+      <label v-if="contractVersion === 'V2' && domain === 'MAINTENANCE'" class="field"
         ><span>关联保障培训需求（可选）</span
         ><select v-model="requestId">
           <option value="">独立培训课程</option>
@@ -577,16 +834,14 @@ async function revise() {
         </select></label
       >
       <div class="info-note">
-        创建后载入{{
-          domain === "OPERATION" ? 8 : 10
-        }}步模板。下一步逐项完善操作内容并预览学员视角。
+        {{ contractVersion === 'V3' ? '创建后生成5个稳定编号的空白步骤，可增删、复制、排序，并从绑定场景动态选择对象和动作。' : `兼容课件继续载入${domain === 'OPERATION' ? 8 : 10}步旧模板，可立即用于原训练金标。` }}
       </div>
     </div>
     <template #footer
       ><button class="btn secondary" @click="creating = false">取消</button
       ><button
         class="btn primary"
-        :disabled="!newName.trim() || !newDescription.trim() || store.busy > 0"
+        :disabled="!newName.trim() || !newDescription.trim() || (contractVersion === 'V3' && (!curriculumName.trim() || !curriculumObjective.trim() || !unitName.trim() || !templateId)) || store.busy > 0"
         @click="create"
       >
         创建草稿
@@ -614,6 +869,7 @@ async function revise() {
     <LessonStep
       :key="stepIndex"
       :step="current"
+      :objects="modern ? availableObjects : undefined"
       @submit="tryPreview"
     /><template #footer
       ><button class="btn secondary" @click="preview = false">

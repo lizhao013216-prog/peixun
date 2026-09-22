@@ -16,10 +16,15 @@ public final class TrainingModule {
       case "asset.import" -> {
         String name = p.path("name").asText().trim();
         require(!name.isBlank(), "请填写资源名称");
+        String assetId = id("ASSET");
+        String ownerSystem = p.path("ownerSystem").asText();
+        TrainingDomain.require(ownerSystem);
         ObjectNode a =
             obj(
                 "id",
-                id("ASSET"),
+                assetId,
+                "familyId",
+                assetId,
                 "name",
                 name,
                 "category",
@@ -27,17 +32,19 @@ public final class TrainingModule {
                 "format",
                 p.path("format").asText("FBX"),
                 "componentId",
-                p.path("componentId").asText("PUMP-01"),
+                p.path("componentId").asText("GENERIC"),
                 "status",
                 "DRAFT",
                 "version",
                 1,
+                "editRevision",
+                1,
                 "ownerSystem",
-                p.path("ownerSystem").asText("SHARED"),
+                ownerSystem,
                 "visibility",
-                p.path("visibility").asText("SHARED"),
+                "PRIVATE",
                 "sharedWith",
-                p.has("sharedWith") ? p.get("sharedWith") : arr("OPERATION", "MAINTENANCE", "SUPPORT"),
+                arr(),
                 "owner",
                 actor,
                 "sourceType",
@@ -47,7 +54,12 @@ public final class TrainingModule {
                 "description",
                 p.path("description").asText(""),
                 "sizeLabel",
-                p.path("sizeLabel").asText("模拟导入"));
+                p.path("sizeLabel").asText("模拟导入"),
+                "actions",
+                arr("CONFIRM", "READ_STATE", "RECORD_CHECK"),
+                "ports",
+                arr());
+        SimulationCapabilities.enrichAsset(a);
         if (p.has("blobRef")) a.set("blobRef", p.get("blobRef"));
         s.withArray("assets").add(a);
         return a;
@@ -60,6 +72,7 @@ public final class TrainingModule {
             .put("id", id("ASSET"))
             .put("parentId", target)
             .put("version", a.path("version").asInt() + 1)
+            .put("editRevision", 1)
             .put("status", "PROCESSING")
             .put("name", a.path("name").asText() + " · 派生")
             .put("owner", actor);
@@ -75,6 +88,21 @@ public final class TrainingModule {
         s.withArray("assets").add(derived);
         job(s, "ASSET", derived.path("id").asText());
         return derived;
+      }
+      case "asset.share" -> {
+        ObjectNode a = find(s, "assets", target);
+        require(p.path("sharedWith").isArray(), "共享范围必须是系统列表");
+        ArrayNode sharedWith = arr();
+        for (JsonNode item : p.withArray("sharedWith")) {
+          String domain = item.asText();
+          TrainingDomain.require(domain);
+          require(!domain.equals(a.path("ownerSystem").asText()), "素材所属系统无需重复共享");
+          if (!sharedWith.toString().contains("\"" + domain + "\"")) sharedWith.add(domain);
+        }
+        a.set("sharedWith", sharedWith);
+        a.put("visibility", sharedWith.isEmpty() ? "PRIVATE" : "SHARED");
+        a.put("editRevision", a.path("editRevision").asInt(1) + 1);
+        return a;
       }
       case "asset.approve" -> {
         ObjectNode a = find(s, "assets", target);
@@ -322,6 +350,9 @@ public final class TrainingModule {
       case "training.assign" -> {
         ObjectNode c = find(s, "courses", p.path("courseId").asText());
         require(c.path("status").asText().equals("PUBLISHED"), "课程尚未发布");
+        require(
+            c.path("interactionSchemaVersion").asInt() < 3,
+            "交互契约V3课件将在P4接入配置驱动训练，当前不能分配给旧运行器");
         ObjectNode a =
             obj(
                 "id",
@@ -349,6 +380,9 @@ public final class TrainingModule {
         ObjectNode assignment = find(s, "assignments", p.path("assignmentId").asText());
         ObjectNode c = find(s, "courses", assignment.path("courseId").asText());
         require(c.path("status").asText().equals("PUBLISHED"), "课程尚未发布");
+        require(
+            c.path("interactionSchemaVersion").asInt() < 3,
+            "交互契约V3课件将在P4接入配置驱动训练，当前任务不能由旧运行器启动");
         require(
             actor.equals(assignment.path("learnerId").asText())
                 || actor.equals("ADMIN")

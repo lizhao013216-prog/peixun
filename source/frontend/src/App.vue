@@ -32,6 +32,9 @@ import RecordsView from "./views/RecordsView.vue";
 import SettingsView from "./views/SettingsView.vue";
 import GuideView from "./views/GuideView.vue";
 import SystemOverviewView from "./views/SystemOverviewView.vue";
+import SimulationProjectsView from "./views/SimulationProjectsView.vue";
+import SimulationProjectEditor from "./views/SimulationProjectEditor.vue";
+import SimulationTemplatesView from "./views/SimulationTemplatesView.vue";
 import NotFoundView from "./views/NotFoundView.vue";
 import DemoGuide from "./components/DemoGuide.vue";
 import { guide } from "./guide";
@@ -66,6 +69,10 @@ const viewMap: any = {
   overview: Workbench,
   guide: GuideView,
   assets: AssetsView,
+  "system-assets": AssetsView,
+  "simulation-projects": SimulationProjectsView,
+  "simulation-project-editor": SimulationProjectEditor,
+  "simulation-templates": SimulationTemplatesView,
   authoring: AuthoringView,
   training: TrainingView,
   planning: PlanningView,

@@ -92,9 +92,11 @@ public class DemoController {
   public ObjectNode upload(
       @RequestParam MultipartFile file,
       @RequestParam(defaultValue = "demo") String workspace,
+      @RequestParam String domain,
       @RequestHeader(defaultValue = "") String authorization)
       throws Exception {
     String who = actor(authorization);
+    TrainingDomain.require(domain);
     DemoService.authorize(who, "asset.import");
     require(!file.isEmpty() && file.getSize() <= 20 * 1024 * 1024, "文件必须非空且不超过20MB");
     String name =
@@ -132,6 +134,8 @@ public class DemoController {
               obj(
                   "name",
                   name,
+                  "ownerSystem",
+                  domain,
                   "format",
                   ext,
                   "category",
@@ -145,7 +149,8 @@ public class DemoController {
                   "blobRef",
                   blob,
                   "sizeLabel",
-                  round(file.getSize() / 1024.0) + " KB")));
+                  round(file.getSize() / 1024.0) + " KB")),
+          domain);
     } catch (RuntimeException e) {
       Files.deleteIfExists(path);
       throw e;
@@ -156,10 +161,11 @@ public class DemoController {
   public ResponseEntity<byte[]> assetFile(
       @PathVariable String id,
       @RequestParam(defaultValue = "demo") String workspace,
+      @RequestParam(defaultValue = "") String domain,
       @RequestHeader(defaultValue = "") String authorization)
       throws Exception {
-    actor(authorization);
-    ObjectNode asset = find(service.state(workspace), "assets", id);
+    String who = actor(authorization);
+    ObjectNode asset = find(service.state(workspace, who, domain), "assets", id);
     String ref = asset.path("blobRef").asText();
     require(ref.matches("[a-f0-9-]{36}"), "此资源没有上传源文件");
     Path path = Paths.get(".data", "uploads", ref);

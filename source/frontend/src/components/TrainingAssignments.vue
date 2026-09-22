@@ -26,10 +26,11 @@ const starting = ref<any>(null),
   mode = ref("GUIDED"),
   scope = ref("INDIVIDUAL");
 const selectedCourse = computed(() =>
+  starting.value?.courseSnapshot ||
   s.value.courses.find((c: any) => c.id === starting.value?.courseId),
 );
 const courseFor = (a: any) =>
-  s.value.courses.find((c: any) => c.id === a.courseId);
+  a.courseSnapshot || s.value.courses.find((c: any) => c.id === a.courseId);
 const ongoing = (a: any) =>
   s.value.attempts.find(
     (t: any) =>
@@ -39,7 +40,7 @@ const last = (a: any) =>
   s.value.attempts.filter((t: any) => t.assignmentId === a.id).at(-1);
 function open(a: any) {
   starting.value = a;
-  mode.value = "GUIDED";
+  mode.value = a.mode || "GUIDED";
   scope.value = "INDIVIDUAL";
 }
 function enter(t: any) {
@@ -137,12 +138,14 @@ async function start() {
               store.accounts.find((u) => u.id === a.learnerId)?.name
             }}</span
           ><span
-            >{{ courseFor(a)?.steps.length }} 个步骤 · V{{
-              courseFor(a)?.version
+            >{{ courseFor(a)?.steps?.length }} 个步骤 · V{{
+              a.courseVersion || courseFor(a)?.version
             }}</span
+          ><span v-if="a.dueAt">截止：{{ a.dueAt }}</span
+          ><span v-if="a.stationId">指定台位：{{ a.stationId }}</span
           ><span v-if="ongoing(a)"
-            >进度：已完成 {{ ongoing(a).currentStep }} /
-            {{ courseFor(a)?.steps.length }}</span
+            >进度：已通过 {{ ongoing(a).passedStepIds?.length ?? ongoing(a).currentStep }} /
+            {{ courseFor(a)?.steps?.length }}</span
           >
         </div>
         <div class="task-next">
@@ -206,14 +209,14 @@ async function start() {
         ><span>成绩归属</span
         ><select v-model="scope">
           <option value="INDIVIDUAL">个人训练 · 完成后可由教员确认证据</option>
-          <option value="TEAM">团队训练 · 操作前需申请控制权</option>
+          <option v-if="selectedCourse?.interactionSchemaVersion !== 3" value="TEAM">团队训练 · 操作前需申请控制权</option>
         </select></label
       >
       <p>
         {{
           mode === "DEMONSTRATION"
             ? "本次演示不计个人成绩。"
-            : "满分100分；每次错误扣5分，主动查看提示扣2分；平台故障不扣分。"
+            : `满分${selectedCourse?.scoreRule?.total ?? 100}分；每次错误扣${selectedCourse?.scoreRule?.errorPenalty ?? 5}分，主动查看提示扣${selectedCourse?.scoreRule?.helpPenalty ?? 2}分；平台故障不扣分。`
         }}
       </p>
       <div v-if="store.actor !== starting.learnerId" class="info-note warning">

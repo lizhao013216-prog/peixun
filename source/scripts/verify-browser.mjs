@@ -74,7 +74,7 @@ try {
   const routes = [
     ...catalog.matchAll(/page\(\s*"[^"]+",\s*"[^"]+",\s*"([^"]+)"/g),
   ].map((match) => match[1].replace(":id", "current"));
-  assert.equal(routes.length, 41);
+  assert.equal(routes.length, 53);
   for (const route of routes) {
     await page.goto(base + route);
     await page.locator("main h1").first().waitFor();
@@ -116,12 +116,8 @@ try {
   await page.goto(`${base}/operation/coursewares/DOES-NOT-EXIST`);
   await page.getByText("当前系统中没有这个课件", { exact: true }).waitFor();
   await page.goto(`${base}/support/training`);
-  await page.getByText(/完整业务尚未开放/).waitFor();
-  assert.equal(
-    await page.getByRole("button", { name: /新建.*课件/ }).count(),
-    0,
-    "P1 不应伪造保障教学课件功能",
-  );
+  await page.getByRole("button", { name: /新建.*课件/ }).waitFor();
+  assert.ok(page.url().includes("/support/coursewares/current"));
   for (const [name, route] of [
     ["training", `/sessions/${data.a2}`],
     ["exercise", `/support/exercises/${data.delayRun}`],
@@ -154,39 +150,25 @@ try {
     "2",
   ]);
   await page.goto(`${base}/operation/topologies/current`);
-  await page.locator(".panel").first().waitFor();
+  await page.getByText("旧全局配置的只读兼容快照", { exact: false }).waitFor();
+  assert.ok(page.url().includes("/operation/simulation-projects/PROJECT-LEGACY-OPERATION"));
   await page.screenshot({
     path: path.join(output, "topology.png"),
     fullPage: true,
   });
-  await page.getByRole("button", { name: "启动设备", exact: true }).click();
-  await page.getByRole("status").filter({ hasText: "阀门未就绪" }).waitFor();
-  await page.getByRole("checkbox", { name: "阀门已就绪" }).check();
-  await page.getByRole("status").filter({ hasText: "操作已保存" }).waitFor();
-  await page.getByRole("button", { name: "启动设备", exact: true }).click();
-  await page
-    .getByRole("status")
-    .filter({ hasText: "启动信号已发送" })
-    .waitFor();
-  await page.getByRole("slider").fill("0.2");
-  await page.getByRole("status").filter({ hasText: "信号已注入" }).waitFor();
-  assert.ok(
-    await page.getByText("状态异常", { exact: true }).first().isVisible(),
-  );
-  await page.getByRole("button", { name: "停止设备", exact: true }).click();
-  await page.getByRole("status").filter({ hasText: "设备已停止" }).waitFor();
-  await page.getByRole("button", { name: "确认复位", exact: true }).click();
-  await page.getByRole("status").filter({ hasText: "设备已复位" }).waitFor();
   await page.goto(`${base}/operation/coursewares/current`);
-  await page.getByRole("button", { name: "新建操作课程", exact: true }).click();
+  await page.getByRole("button", { name: "新建操作课件", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog
     .getByRole("textbox", { name: "课程名称 *", exact: true })
     .fill("浏览器创建课程");
+  await dialog
+    .getByRole("combobox", { name: "课件契约", exact: true })
+    .selectOption("V2");
   await dialog.getByRole("button", { name: "创建草稿", exact: true }).click();
   await page
     .getByRole("status")
-    .filter({ hasText: "课程草稿已创建" })
+    .filter({ hasText: "兼容课件草稿已创建" })
     .waitFor();
   await page.getByRole("button", { name: "提交审核", exact: true }).click();
   await page.getByRole("status").filter({ hasText: "课程已提交" }).waitFor();
@@ -254,6 +236,64 @@ try {
     fullPage: false,
   });
   await page.getByRole("button", { name: "退出演示指引", exact: true }).click();
+  await page.setViewportSize({ width: 1366, height: 768 });
+  for (const route of [
+    "/operation/assignments",
+    `/support/exercises/${data.delayRun}`,
+  ]) {
+    await page.goto(base + route);
+    await page.locator("main h1, main .panel").first().waitFor();
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth + 2,
+      ),
+      false,
+      `1366px笔记本页面整体溢出：${route}`,
+    );
+    const visibleButton = page.locator("main .btn:visible").first();
+    if (await visibleButton.count()) {
+      const box = await visibleButton.boundingBox();
+      assert.ok(
+        box && box.x >= 0 && box.x + box.width <= 1366,
+        `1366px笔记本关键操作被横向遮挡：${route}`,
+      );
+    }
+  }
+  const laptopContext = await browser.newContext({
+    viewport: { width: 1366, height: 768 },
+    deviceScaleFactor: 1,
+    locale: "zh-CN",
+  });
+  await laptopContext.addInitScript((workspace) => {
+    localStorage.setItem("peixun.workspace", workspace);
+    localStorage.setItem("peixun.actor", "ADMIN");
+  }, data.workspace);
+  const laptopPage = await laptopContext.newPage();
+  laptopPage.on("pageerror", (error) => errors.push(error.message));
+  laptopPage.on("response", (response) => {
+    if (response.status() >= 500)
+      errors.push(`${response.status()} ${response.url()}`);
+  });
+  await laptopPage.goto(`${base}/sessions/${data.a2}`);
+  await laptopPage.locator("main .panel").first().waitFor();
+  const laptopTrainingText = await laptopPage.locator("main").innerText();
+  assert.match(
+    laptopTrainingText,
+    /训练完成|全部步骤已完成/,
+    `1366px训练结果未正确显示：${laptopTrainingText}`,
+  );
+  assert.equal(
+    await laptopPage.evaluate(
+      () => document.documentElement.scrollWidth > innerWidth + 2,
+    ),
+    false,
+    "1366px笔记本训练结果整体溢出",
+  );
+  await laptopPage.screenshot({
+    path: path.join(output, "laptop-training-1366.png"),
+    fullPage: true,
+  });
+  await laptopContext.close();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${base}/workbench`);
   await page.locator(".stat-card").first().waitFor();
@@ -287,10 +327,10 @@ try {
   assert.deepEqual(errors, [], "浏览器发生未处理异常或服务端错误");
   fs.writeFileSync(
     path.join(output, "browser-verification.md"),
-    `# 浏览器验收\n\n- 41个规范页面可访问。\n- 三子系统任务按领域隔离，旧课件路径正确重定向。\n- 无效课件深链明确提示，不回退到最后一项。\n- 保障教学入口明确标注后续阶段，未伪造功能。\n- 1440px桌面页面无整体横向溢出。\n- 390px工作台与折叠菜单可用。\n- 演练复盘物料账本随时间变化。\n- 未捕获页面异常：${errors.length}。\n- 完整案例由HTTP业务命令生成。\n- 页面按钮生成独立完整案例通过。\n- 三系统指引入口、角色切换和刷新恢复通过。\n- 正文字号16px，工作台及演示中心不含旧展示名称。\n`,
+    `# 浏览器验收\n\n- 53个规范页面可访问。\n- 三子系统任务按领域隔离，旧课件路径正确重定向。\n- 旧设备组网路径进入只读兼容工程，不再写入全局单例。\n- 无效课件深链明确提示，不回退到最后一项。\n- 保障教学旧入口正确重定向到已开放的操作课件。\n- 1440px桌面页面无整体横向溢出。\n- 1366×768培训任务、学员训练和保障演练关键操作可见且无整体溢出。\n- 390px工作台与折叠菜单可用。\n- 演练复盘物料账本随时间变化。\n- 未捕获页面异常：${errors.length}。\n- 完整案例由HTTP业务命令生成。\n- 页面按钮生成独立完整案例通过。\n- 三系统指引入口、角色切换和刷新恢复通过。\n- 正文字号16px，工作台及演示中心不含旧展示名称。\n`,
   );
   console.log(
-    "PASS: 41 routes, domain isolation, deep links, desktop/mobile layout, replay inventory, topology controls, course form persistence, golden HTTP fixture, no page errors.",
+    "PASS: 53 routes, domain isolation, deep links, 1440/1366/390 layout, replay inventory, legacy topology redirect, course form persistence, golden HTTP fixture, no page errors.",
   );
 } finally {
   if (browser) await browser.close();
