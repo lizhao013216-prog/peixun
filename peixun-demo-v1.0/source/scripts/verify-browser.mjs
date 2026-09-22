@@ -158,9 +158,15 @@ try {
     .filter({ hasText: "课程草稿已创建" })
     .waitFor();
   await page.getByRole("button", { name: "提交审核", exact: true }).click();
-  await page.getByRole("status").filter({ hasText: "操作已保存" }).waitFor();
+  await page.getByRole("status").filter({ hasText: "课程已提交" }).waitFor();
   await page.reload();
-  await page.getByText("浏览器创建课程", { exact: true }).first().waitFor();
+  await page.getByRole("textbox", { name: "课程名称", exact: true }).waitFor();
+  assert.equal(
+    await page
+      .getByRole("textbox", { name: "课程名称", exact: true })
+      .inputValue(),
+    "浏览器创建课程",
+  );
   // Verify the actual first-time presentation flow through the UI.
   await page.goto(`${base}/guide`);
   await page

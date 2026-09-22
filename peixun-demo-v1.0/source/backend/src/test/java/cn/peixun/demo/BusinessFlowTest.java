@@ -44,6 +44,11 @@ class BusinessFlowTest {
   }
 
   ObjectNode cmd(String actor, String action, ObjectNode p) {
+    if (action.equals("training.action") && p.path("kind").asText().equals("PASS") && !p.has("actionId")) {
+      ObjectNode a = find(state(), "attempts", p.path("id").asText());
+      JsonNode st = find(state(), "courses", a.path("courseId").asText()).path("steps").get(a.path("currentStep").asInt());
+      if (st != null) p.set("actionId", st.path("actionId"));
+    }
     return (ObjectNode) service.command(workspace, actor, request(action, p)).get("data");
   }
 
@@ -85,8 +90,11 @@ class BusinessFlowTest {
   }
 
   void complete(String attempt, int count) {
-    for (int i = 0; i < count; i++)
-      cmd("LEARNER_A", "training.action", obj("id", attempt, "kind", "PASS", "target", "PUMP-01"));
+    for (int i = 0; i < count; i++) {
+      ObjectNode a = find(state(), "attempts", attempt);
+      JsonNode st = find(state(), "courses", a.path("courseId").asText()).path("steps").get(a.path("currentStep").asInt());
+      cmd("LEARNER_A", "training.action", obj("id", attempt, "kind", "PASS", "target", st.path("target").asText()));
+    }
   }
 
   ObjectNode run(String plan, String scenario) {
@@ -250,5 +258,57 @@ class BusinessFlowTest {
       assertEquals(1, job.path("ignoredCallbacks").asInt());
       assertFalse(TrainingModule.settleJobs(s));
     }
+  }
+
+  @Test
+  void authoredTargetActionAndResultDriveLearnerFeedback() throws Exception {
+    ObjectNode c = cmd("AUTHOR", "course.create", obj("domain", "OPERATION", "name", "定制教学验证"));
+    ArrayNode steps = c.withArray("steps").deepCopy();
+    ((ObjectNode)steps.get(0)).put("target", "SENSOR-01").put("actionId", "READ_CUSTOM")
+        .put("actionLabel", "读取教学指标").put("expectedResult", "已读取定制指标，下一步检查阀门。");
+    cmd("AUTHOR", "course.save", obj("id", c.path("id").asText(), "steps", steps));
+    cmd("AUTHOR", "course.submit", obj("id", c.path("id").asText()));
+    cmd("INSTRUCTOR", "course.approve", obj("id", c.path("id").asText()));
+    cmd("AUTHOR", "course.publish", obj("id", c.path("id").asText()));
+    Thread.sleep(1250);
+    String a = attempt(c.path("id").asText(), "INDIVIDUAL");
+    ObjectNode wrong = cmd("LEARNER_A", "training.action", obj("id", a, "kind", "PASS", "target", "PUMP-01", "actionId", "READ_CUSTOM"));
+    assertEquals(0, wrong.path("currentStep").asInt());
+    assertTrue(wrong.withArray("events").get(0).path("message").asText().contains("SENSOR-01"));
+    wrong = cmd("LEARNER_A", "training.action", obj("id", a, "kind", "PASS", "target", "SENSOR-01", "actionId", "OTHER"));
+    assertEquals(0, wrong.path("currentStep").asInt());
+    assertEquals(2, wrong.path("errors").asInt());
+    ObjectNode right = cmd("LEARNER_A", "training.action", obj("id", a, "kind", "PASS", "target", "SENSOR-01", "actionId", "READ_CUSTOM"));
+    assertEquals(1, right.path("currentStep").asInt());
+    assertEquals("已读取定制指标，下一步检查阀门。", right.withArray("events").get(2).path("message").asText());
+    assertEquals("READ_CUSTOM", right.withArray("events").get(2).path("actionId").asText());
+  }
+
+  @Test
+  void activeAssignmentCannotStartDuplicateAttempt() throws Exception {
+    String c = course("MAINTENANCE", ""), a = attempt(c, "INDIVIDUAL");
+    String assignment = find(state(), "attempts", a).path("assignmentId").asText();
+    assertThrows(BusinessException.class, () -> cmd("LEARNER_A", "training.start", obj("assignmentId", assignment)));
+    cmd("LEARNER_A", "training.pause", obj("id", a));
+    assertThrows(BusinessException.class, () -> cmd("LEARNER_A", "training.start", obj("assignmentId", assignment)));
+    assertEquals(1, state().withArray("attempts").size());
+    cmd("LEARNER_A", "training.pause", obj("id", a));
+    assertEquals("RUNNING", find(state(), "attempts", a).path("status").asText());
+  }
+
+  @Test
+  void incompleteStepIsRejectedAndLegacyPublishedLessonsRemainUsable() {
+    ObjectNode c = cmd("AUTHOR", "course.create", obj("name", "完整教学要求"));
+    ArrayNode steps = c.withArray("steps").deepCopy();
+    ((ObjectNode)steps.get(0)).put("expectedResult", "");
+    assertThrows(BusinessException.class, () -> cmd("AUTHOR", "course.save", obj("id", c.path("id").asText(), "steps", steps)));
+    assertFalse(find(state(), "courses", c.path("id").asText()).path("steps").get(0).path("expectedResult").asText().isBlank());
+    ObjectNode legacy = Seed.create("legacy", "旧版课程", 1);
+    ObjectNode lesson = TrainingModule.apply(legacy, "course.create", obj("name", "旧版课程"), "AUTHOR");
+    lesson.remove("interactionVersion");
+    lesson.put("status", "PUBLISHED");
+    String assignment = TrainingModule.apply(legacy, "training.assign", obj("courseId", lesson.path("id").asText()), "INSTRUCTOR").path("id").asText();
+    String attempt = TrainingModule.apply(legacy, "training.start", obj("assignmentId", assignment), "LEARNER_A").path("id").asText();
+    assertEquals(1, TrainingModule.apply(legacy, "training.action", obj("id", attempt, "target", "PUMP-01", "kind", "PASS"), "LEARNER_A").path("currentStep").asInt());
   }
 }

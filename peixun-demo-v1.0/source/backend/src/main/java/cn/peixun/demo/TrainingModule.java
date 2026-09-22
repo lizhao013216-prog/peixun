@@ -223,12 +223,14 @@ public final class TrainingModule {
                 "DRAFT",
                 "createdBy",
                 actor,
+                "interactionVersion",
+                2,
                 "steps",
                 Seed.steps(domain),
                 "mode",
                 p.path("mode").asText("GUIDED"),
                 "description",
-                p.path("description").asText(""),
+                p.path("description").asText(domain.equals("OPERATION") ? "掌握泵组场景确认、设备联动、异常识别与记录提交流程。" : "掌握维修准备、部件识别、模拟操作、检测与训练记录提交流程。"),
                 "scene",
                 s.get("scene").deepCopy(),
                 "topology",
@@ -254,6 +256,7 @@ public final class TrainingModule {
         for (String k :
             new String[] {"name", "description", "steps", "uiTemplate", "mode", "assets"})
           if (p.has(k)) c.set(k, p.get(k));
+        validateCourse(c);
         c.set("scene", s.get("scene").deepCopy());
         c.set("topology", s.get("topology").deepCopy());
         return c;
@@ -261,6 +264,7 @@ public final class TrainingModule {
       case "course.submit" -> {
         ObjectNode c = find(s, "courses", target);
         require(c.path("status").asText().equals("DRAFT"), "仅草稿可以提交审核");
+        validateCourse(c);
         require(c.path("steps").size() > 0, "课程缺少步骤");
         java.util.Set<String> ids = new java.util.HashSet<>();
         for (JsonNode step : c.path("steps")) {
@@ -339,6 +343,9 @@ public final class TrainingModule {
                 || actor.equals("ADMIN")
                 || actor.equals("INSTRUCTOR"),
             "当前学员未被分配此任务");
+        for (JsonNode existing : s.withArray("attempts"))
+          require(!(existing.path("assignmentId").asText().equals(assignment.path("id").asText())
+              && existing.path("status").asText().matches("RUNNING|PAUSED")), "该任务已有进行中的训练，请点击继续训练");
         String mode = p.path("mode").asText("GUIDED");
         require(mode.matches("GUIDED|FREE|DEMONSTRATION"), "训练模式不正确");
         require(p.path("scope").asText("INDIVIDUAL").matches("NONE|INDIVIDUAL|TEAM"), "计分范围不正确");
@@ -470,11 +477,21 @@ public final class TrainingModule {
                       Instant.now().toString()));
           return a;
         }
-        String expected = c.path("steps").get(current).path("id").asText();
-        if (kind.equals("PASS")
-            && ((p.has("stepId") && !p.path("stepId").asText().equals(expected))
-                || (p.has("target") && !p.path("target").asText().equals("PUMP-01"))))
-          kind = "ERROR";
+        JsonNode currentStep = c.path("steps").get(current);
+        String expected = currentStep.path("id").asText();
+        String expectedTarget = currentStep.path("target").asText("PUMP-01");
+        String expectedAction = currentStep.path("actionId").asText();
+        String reason = "";
+        if (kind.equals("PASS")) {
+          if (p.has("stepId") && !p.path("stepId").asText().equals(expected)) reason = "步骤顺序不正确，请完成当前步骤";
+          else if (!p.path("target").asText().equals(expectedTarget)) reason = "对象不正确：本步应选择 " + expectedTarget + "，当前选择 " + p.path("target").asText("未选择");
+          else if (c.path("interactionVersion").asInt() >= 2 && !p.path("actionId").asText().equals(expectedAction)) reason = "操作不正确，请执行本步动作：" + currentStep.path("actionLabel").asText();
+          if (!reason.isBlank()) kind = "ERROR";
+        }
+        String message = kind.equals("PASS")
+            ? currentStep.path("expectedResult").asText("本步骤已通过，操作记录已保存。")
+            : kind.equals("HELP") ? currentStep.path("description").asText() + " 目标对象：" + expectedTarget
+            : reason.isBlank() ? "操作不符合当前步骤，请检查对象和动作后重试。" : reason;
         ObjectNode ev =
             obj(
                 "id",
@@ -491,6 +508,13 @@ public final class TrainingModule {
                 Instant.now().toString(),
                 "sequence",
                 a.withArray("events").size() + 1);
+        ev.put("target", p.path("target").asText())
+            .put("actionId", p.path("actionId").asText())
+            .put("actionLabel", currentStep.path("actionLabel").asText("执行当前步骤"))
+            .put("message", message)
+            .put("expectedTarget", expectedTarget)
+            .put("expectedResult", currentStep.path("expectedResult").asText())
+            .put("penalty", a.path("scope").asText().equals("NONE") ? 0 : kind.equals("ERROR") ? 5 : kind.equals("HELP") ? 2 : 0);
         a.withArray("events").add(ev);
         if (kind.equals("PASS")) {
           a.put("currentStep", ++current)
@@ -586,6 +610,22 @@ public final class TrainingModule {
         return issue;
       }
       default -> throw new BusinessException(400, "UNKNOWN_COMMAND", "未知训练命令：" + action);
+    }
+  }
+
+  private static void validateCourse(ObjectNode c) {
+    require(!c.path("name").asText().isBlank(), "请填写课程名称");
+    require(c.path("steps").isArray() && c.path("steps").size() > 0, "请至少配置一个教学步骤");
+    java.util.Set<String> ids = new java.util.HashSet<>();
+    for (JsonNode st : c.path("steps")) {
+      String label = "步骤 " + st.path("id").asText() + "：";
+      require(!st.path("id").asText().isBlank() && ids.add(st.path("id").asText()), "步骤编号缺失或重复");
+      require(!st.path("name").asText().isBlank(), label + "请填写步骤名称");
+      require(st.path("target").asText().matches("PUMP-01|VALVE-01|CTRL-01|SENSOR-01"), label + "请选择有效的操作对象");
+      if (c.path("interactionVersion").asInt() >= 2) {
+        for (String key : new String[]{"description", "actionId", "actionLabel", "expectedResult"})
+          require(!st.path(key).asText().isBlank(), label + "操作说明、执行动作和预期结果必须填写完整");
+      }
     }
   }
 

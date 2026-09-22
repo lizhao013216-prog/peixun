@@ -228,7 +228,7 @@ onUnmounted(() => clearInterval(interval));
         </div>
       </header>
       <main>
-        <div class="page-heading">
+        <div v-if="page.id !== 'C05'" class="page-heading">
           <div>
             <div class="eyebrow">
               {{

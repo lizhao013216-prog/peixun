@@ -10,14 +10,14 @@ const props = defineProps<{
   frameAngle?: number;
 }>();
 const emit = defineEmits(["select"]);
-const selected = ref(props.selected || "PUMP-01");
+const selected = ref(props.selected ?? "PUMP-01");
 watch(
   () => props.selected,
   (value) => {
-    if (value) selected.value = value;
+    if (value !== undefined) selected.value = value;
   },
 );
-const active = computed(() => /RUNNING|STEP|COMPLETED/.test(props.state || ""));
+const active = computed(() => props.state === "RUNNING");
 const alarm = computed(() => props.state === "ALARM");
 function select(id: string) {
   selected.value = id;
@@ -283,11 +283,13 @@ function select(id: string) {
       ><span :class="alarm ? 'text-red' : 'text-teal'">{{
         alarm
           ? "状态异常"
-          : state === "COMPLETED"
-            ? "流程完成"
-            : active
-              ? "运行中"
-              : "准备就绪"
+          : state?.startsWith("STEP_")
+            ? `已通过 ${state.slice(5)} 步`
+            : state === "COMPLETED"
+              ? "流程完成"
+              : active
+                ? "运行中"
+                : "准备就绪"
       }}</span>
     </div>
   </div>

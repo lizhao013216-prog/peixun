@@ -343,45 +343,43 @@ public final class Seed {
   }
 
   public static ArrayNode steps(String domain) {
-    String[] names =
-        domain.equals("OPERATION")
-            ? new String[] {"检查场景", "确认模拟状态", "发出启动请求", "读取指标", "识别模拟异常", "发出停机请求", "确认复位", "提交记录"}
-            : new String[] {
-              "阅读并确认任务卡",
-              "确认模拟准备状态",
-              "识别目标部件",
-              "选择示例工具",
-              "执行模拟拆卸",
-              "记录检查结果",
-              "选择示例替换件",
-              "执行模拟安装",
-              "完成模拟检测",
-              "提交训练记录"
-            };
-    ArrayNode a = arr();
-    for (int i = 0; i < names.length; i++)
-      a.add(
-          obj(
-              "id",
-              (domain.equals("OPERATION") ? "O" : "R") + String.format("%02d", i + 1),
-              "name",
-              names[i],
-              "description",
-              "确认当前对象和前置步骤后执行模拟操作。",
-              "target",
-              "PUMP-01",
-              "score",
-              100.0 / names.length,
-              "order",
-              i + 1));
-    return a;
+    String[][] rows = domain.equals("OPERATION") ? new String[][] {
+      {"检查场景", "PUMP-01", "确认训练场景", "选择场景中的通用泵组，确认本次练习对象。", "已确认泵组，训练场景检查完成。"},
+      {"确认模拟状态", "VALVE-01", "确认阀门就绪", "选择阀门，确认模拟启动前的准备状态。", "阀门准备状态已确认，可以继续模拟启动。"},
+      {"发出启动请求", "CTRL-01", "发送模拟启动请求", "选择控制单元，点击下方启动请求按钮。", "控制单元已接收模拟启动请求。"},
+      {"读取指标", "SENSOR-01", "读取模拟指标", "选择传感器，读取本步骤的模拟状态反馈。", "传感器模拟指标已读取并记录。"},
+      {"识别模拟异常", "SENSOR-01", "记录模拟异常", "选择传感器，将演示异常记录到本次训练。", "模拟异常已记录，下一步进行模拟停机。"},
+      {"发出停机请求", "CTRL-01", "发送模拟停机请求", "选择控制单元，提交本次模拟停机操作。", "控制单元已接收模拟停机请求。"},
+      {"确认复位", "PUMP-01", "确认模拟复位", "选择通用泵组，确认本轮模拟状态复位。", "泵组模拟复位已确认。"},
+      {"提交记录", "PUMP-01", "提交操作训练记录", "选择通用泵组，提交本轮全部操作记录。", "8步操作训练已完成，成绩和过程记录已保存。"}
+    } : new String[][] {
+      {"阅读并确认任务卡", "PUMP-01", "确认维修训练任务", "本课训练泵组维修的业务步骤。选择通用泵组，确认任务对象与课程目标。", "任务已确认，下一步确认模拟准备状态。"},
+      {"确认模拟准备状态", "VALVE-01", "确认模拟准备完成", "选择阀门，确认演示场景的准备状态。", "模拟准备已确认，下一步识别目标部件。"},
+      {"识别目标部件", "PUMP-01", "确认目标部件", "选择通用泵组，确认本课使用的示例部件归属。", "示例部件已识别，下一步确认演示工具。"},
+      {"选择示例工具", "PUMP-01", "确认示例工具", "选择泵组工位，确认平台提供的本步骤演示工具。", "示例工具选择已记录。"},
+      {"执行模拟拆卸", "PUMP-01", "执行模拟拆卸", "选择通用泵组，向假设平台提交拆卸演示动作。", "模拟拆卸动作已完成，等待记录检查结果。"},
+      {"记录检查结果", "PUMP-01", "保存模拟检查结果", "选择通用泵组，保存本次模拟部件检查结果。", "模拟检查结果已保存。"},
+      {"选择示例替换件", "PUMP-01", "确认示例替换件", "选择通用泵组，确认本步骤使用的示例替换件。", "示例替换件已确认，下一步进行模拟安装。"},
+      {"执行模拟安装", "PUMP-01", "执行模拟安装", "选择通用泵组，向假设平台提交安装演示动作。", "模拟安装已完成，下一步进行模拟检测。"},
+      {"完成模拟检测", "SENSOR-01", "完成模拟检测", "选择传感器，提交本步骤的模拟检测。", "模拟检测已完成，可以提交本次训练。"},
+      {"提交训练记录", "PUMP-01", "提交维修训练记录", "选择通用泵组，提交本轮维修训练记录。", "10步维修训练已完成，成绩已保存，等待教员确认证据。"}
+    };
+    ArrayNode result = arr();
+    for (int i = 0; i < rows.length; i++) {
+      String key = (domain.equals("OPERATION") ? "O" : "R") + String.format("%02d", i + 1);
+      result.add(obj("id", key, "name", rows[i][0], "target", rows[i][1],
+          "description", rows[i][3], "actionId", key + "_ACTION", "actionLabel", rows[i][2],
+          "expectedResult", rows[i][4], "score", 100.0 / rows.length, "order", i + 1));
+    }
+    return result;
   }
 
   public static ArrayNode accounts() {
     return arr(
         obj("id", "ADMIN", "name", "演示管理员", "role", "ADMIN"),
-        obj("id", "AUTHOR", "name", "林悦 · 制作员", "role", "AUTHOR"),
+        obj("id", "AUTHOR", "name", "林悦 · 制作教员", "role", "AUTHOR"),
         obj("id", "INSTRUCTOR", "name", "陈老师 · 教员", "role", "INSTRUCTOR"),
+        obj("id", "REVIEW_TEACHER", "name", "周老师 · 审核教员", "role", "INSTRUCTOR"),
         obj("id", "LEARNER_A", "name", "李工 · 学员A", "role", "LEARNER"),
         obj("id", "LEARNER_B", "name", "王工 · 学员B", "role", "LEARNER"),
         obj("id", "PLANNER", "name", "张工 · 筹划员", "role", "PLANNER"),

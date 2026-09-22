@@ -1,14 +1,24 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRouter } from "vue-router";
-import { store, fmt, time } from "../store";
+import { store, fmt, time, login, notify } from "../store";
 import { pathFor, actionText } from "../catalog";
 import Icon from "../components/Icon.vue";
 import Badge from "../components/Badge.vue";
 import SceneView from "../components/SceneView.vue";
+import { guide } from "../guide";
 const router = useRouter(),
   s = computed(() => store.data);
 const go = (id: string, target?: string) => router.push(pathFor(id, target));
+async function enterRole(actor: string, page: string) {
+  try {
+    await login(actor);
+    guide.active = false;
+    go(page);
+  } catch (e: any) {
+    notify(e.message, "error");
+  }
+}
 const completed = computed(() =>
   s.value.runs.filter((r: any) => r.status === "COMPLETED"),
 );
@@ -109,6 +119,32 @@ const statCards = computed(() => [
 ]);
 </script>
 <template>
+  <section class="role-entry-grid" aria-label="按角色开始业务">
+    <button @click="enterRole('AUTHOR', 'S202')">
+      <Icon name="BookOpenCheck" :size="26" />
+      <div>
+        <b>教员：制作与发布课件</b
+        ><span>编辑步骤 → 学员预览 → 审核发布 → 分配任务</span>
+      </div>
+      <Icon name="ArrowRight" />
+    </button>
+    <button @click="enterRole('LEARNER_A', 'S203')">
+      <Icon name="GraduationCap" :size="26" />
+      <div>
+        <b>学员：开始我的训练</b
+        ><span>读任务 → 选对象 → 执行动作 → 看结果</span>
+      </div>
+      <Icon name="ArrowRight" />
+    </button>
+    <button @click="enterRole('INSTRUCTOR', 'S204')">
+      <Icon name="ClipboardCheck" :size="26" />
+      <div>
+        <b>教员：检查培训结果</b
+        ><span>查看成绩与记录 → 确认证据 → 回流准备</span>
+      </div>
+      <Icon name="ArrowRight" />
+    </button>
+  </section>
   <section class="welcome-panel">
     <div class="welcome-copy">
       <div class="section-kicker">

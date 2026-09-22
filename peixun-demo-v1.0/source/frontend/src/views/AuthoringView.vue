@@ -8,6 +8,7 @@ import Badge from "../components/Badge.vue";
 import Modal from "../components/Modal.vue";
 import Empty from "../components/Empty.vue";
 import SceneView from "../components/SceneView.vue";
+import CourseBuilder from "../components/CourseBuilder.vue";
 const props = defineProps<{ page: any }>();
 const route = useRoute(),
   router = useRouter();
@@ -15,22 +16,7 @@ const s = computed(() => store.data);
 const domain = computed(() =>
   props.page.group === "维修培训" ? "MAINTENANCE" : "OPERATION",
 );
-const courses = computed(() =>
-  s.value.courses.filter((c: any) => c.domain === domain.value),
-);
-const course = computed(() =>
-  selected(courses.value, store.selectedCourse || String(route.params.id)),
-);
-const showCreate = ref(false),
-  editSteps = ref(false),
-  form = ref<any>({
-    name: "",
-    description: "",
-    domain: domain.value,
-    requestId: "",
-  }),
-  stepsDraft = ref<any[]>([]),
-  scene = ref<any>(JSON.parse(JSON.stringify(s.value.scene))),
+const scene = ref<any>(JSON.parse(JSON.stringify(s.value.scene))),
   object = ref("PUMP-01"),
   threshold = ref(s.value.topology.threshold),
   sensor = ref(s.value.topology.sensor),
@@ -48,46 +34,8 @@ const isEditor = computed(() =>
   ["C03", "S101", "S201"].includes(props.page.id),
 );
 const isCourse = computed(() => ["S104", "S202"].includes(props.page.id));
-function newCourse() {
-  form.value = {
-    name:
-      domain.value === "OPERATION" ? "泵组操作与异常识别" : "泵组维修技能培训",
-    description: "",
-    domain: domain.value,
-    requestId: "",
-  };
-  showCreate.value = true;
-}
-async function create() {
-  const r = await command("course.create", form.value, "课程草稿已创建");
-  if (r) {
-    store.selectedCourse = r.id;
-    showCreate.value = false;
-  }
-}
-async function doCourse(action: string, c = course.value) {
-  const r = await command(action, { id: c.id });
-  if (r && action === "course.revise") store.selectedCourse = r.id;
-}
-async function assign(c: any) {
-  const r = await command(
-    "training.assign",
-    { courseId: c.id, learnerId: "LEARNER_A" },
-    "已分配给学员A",
-  );
-  if (r) router.push(pathFor("S203"));
-}
-function openSteps() {
-  stepsDraft.value = JSON.parse(JSON.stringify(course.value.steps));
-  editSteps.value = true;
-}
-async function saveSteps() {
-  const r = await command(
-    "course.save",
-    { id: course.value.id, steps: stepsDraft.value },
-    "步骤配置已保存",
-  );
-  if (r) editSteps.value = false;
+async function doCourse(action: string, c: any) {
+  await command(action, { id: c.id });
 }
 async function saveScene() {
   await command(
@@ -704,226 +652,7 @@ const pendingCourses = computed(() =>
       </div>
     </section></template
   >
-  <template v-else-if="isCourse"
-    ><div class="toolbar">
-      <span class="pill">{{
-        domain === "OPERATION" ? "8步操作课程" : "10步维修课件"
-      }}</span
-      ><span class="pill">审核 → 发布 → 培训 → 改进</span
-      ><span class="spacer"></span
-      ><button class="btn primary" @click="newCourse">
-        <Icon name="Plus" :size="16" />{{
-          domain === "OPERATION" ? "新建操作课程" : "新建维修课件"
-        }}
-      </button>
-    </div>
-    <div class="course-list section-space">
-      <article
-        v-for="c in courses"
-        :key="c.id"
-        class="course-card"
-        :class="{ active: c.id === course?.id }"
-        @click="store.selectedCourse = c.id"
-      >
-        <div class="course-top">
-          <div
-            class="system-symbol"
-            :class="domain === 'OPERATION' ? 'blue' : 'teal'"
-          >
-            <Icon name="BookOpenCheck" :size="24" />
-          </div>
-          <Badge :status="c.status" />
-        </div>
-        <h3>{{ c.name }}</h3>
-        <p>
-          {{
-            c.description || "装备、步骤和交互配置组成一门可运行的训练课程。"
-          }}
-        </p>
-        <div class="course-bottom">
-          <span>{{ c.steps.length }} 个步骤 · V{{ c.version }}</span
-          ><span>{{ c.requestId ? "来源：培训需求" : "独立创建" }}</span>
-        </div>
-      </article>
-    </div>
-    <section v-if="!course" class="panel">
-      <Empty
-        :title="
-          domain === 'OPERATION'
-            ? '创建第一门操作课程'
-            : '将维修需求转为培训课件'
-        "
-        description="引用共用场景，编排步骤，提交审核并发布可运行版本。"
-        icon="BookOpen"
-        ><button class="btn primary" @click="newCourse">新建课程</button></Empty
-      >
-    </section>
-    <template v-else
-      ><div class="toolbar">
-        <h3>{{ course.name }}</h3>
-        <Badge :status="course.status" /><span class="spacer"></span
-        ><button
-          v-if="course.status === 'DRAFT'"
-          class="btn secondary"
-          @click="openSteps"
-        >
-          <Icon name="ListOrdered" :size="15" />编辑步骤</button
-        ><button
-          v-if="course.status === 'DRAFT'"
-          class="btn primary"
-          @click="doCourse('course.submit')"
-        >
-          提交审核</button
-        ><button
-          v-if="
-            ['PENDING_REVIEW', 'APPROVED', 'BUILD_FAILED', 'BUILDING'].includes(
-              course.status,
-            )
-          "
-          class="btn primary"
-          @click="router.push('/releases')"
-        >
-          进入发布中心<Icon name="ArrowRight" :size="15" /></button
-        ><button
-          v-if="course.status === 'PUBLISHED'"
-          class="btn secondary"
-          @click="doCourse('course.revise')"
-        >
-          创建修订版</button
-        ><button
-          v-if="course.status === 'PUBLISHED'"
-          class="btn primary"
-          @click="assign(course)"
-        >
-          分配培训任务
-        </button>
-      </div>
-      <div class="detail-layout">
-        <section class="panel">
-          <div class="panel-header">
-            <div>
-              <h3>课程步骤</h3>
-              <p>按前置顺序校验操作，记录每一步的结果</p>
-            </div>
-            <span class="pill">满分 100</span>
-          </div>
-          <div class="step-list">
-            <div
-              v-for="(step, i) in course.steps"
-              :key="step.id"
-              class="step-item"
-            >
-              <span class="step-num">{{ Number(i) + 1 }}</span>
-              <div style="flex: 1">
-                <b>{{ step.name }}</b>
-                <p>{{ step.description }}</p>
-              </div>
-              <span class="pill">{{ step.id }}</span
-              ><span class="subtle-label">{{ step.score }} 分</span>
-            </div>
-          </div>
-        </section>
-        <div class="detail-sidebar">
-          <section class="panel">
-            <div class="panel-header"><h3>版本与评分</h3></div>
-            <div class="panel-body kv-list">
-              <div>
-                <span>课程版本</span><b>V{{ course.version }}</b>
-              </div>
-              <div><span>对象</span><b>PUMP-01</b></div>
-              <div>
-                <span>界面模板</span><b>{{ course.uiTemplate }}</b>
-              </div>
-              <div><span>错误操作</span><b>−5 分 / 次</b></div>
-              <div><span>主动帮助</span><b>−2 分 / 次</b></div>
-              <div>
-                <span>来源版本</span><b>{{ course.parentId || "初始版本" }}</b>
-              </div>
-            </div>
-          </section>
-          <section class="panel">
-            <div class="panel-header"><h3>训练模式</h3></div>
-            <div class="panel-body">
-              <div
-                v-for="m in [
-                  ['演示模式', '按脚本讲解，不计个人成绩'],
-                  ['提示操作', '展示当前步骤与操作帮助'],
-                  ['自由操作', '不预先提示正确对象'],
-                ]"
-                :key="m[0]"
-                class="list-card"
-              >
-                <div>
-                  <b>{{ m[0] }}</b>
-                  <p>{{ m[1] }}</p>
-                </div>
-              </div>
-            </div>
-          </section>
-        </div>
-      </div></template
-    ></template
-  >
-  <Modal
-    v-if="showCreate"
-    :title="domain === 'OPERATION' ? '新建操作课程' : '新建维修课件'"
-    @close="showCreate = false"
-    ><div class="form-stack">
-      <label class="field"
-        ><span>课程名称 *</span><input v-model="form.name" /></label
-      ><label v-if="domain === 'MAINTENANCE'" class="field"
-        ><span>关联培训需求（可选）</span
-        ><select v-model="form.requestId">
-          <option value="">独立新建课件</option>
-          <option
-            v-for="r in s.requests.filter((r: any) => r.status !== 'COMPLETED')"
-            :key="r.id"
-            :value="r.id"
-          >
-            {{ r.name }} · {{ r.id }}
-          </option>
-        </select></label
-      ><label class="field"
-        ><span>课程说明</span
-        ><textarea
-          v-model="form.description"
-          placeholder="描述培训目标、对象及使用场景"
-        />
-      </label>
-      <div class="info-note">
-        <Icon name="Info" :size="16" />自动载入{{
-          domain === "OPERATION" ? "八" : "十"
-        }}步示例模板。创建后可编辑步骤，再进行审核和发布。
-      </div>
-    </div>
-    <template #footer
-      ><button class="btn secondary" @click="showCreate = false">取消</button
-      ><button
-        class="btn primary"
-        :disabled="!form.name.trim() || store.busy > 0"
-        @click="create"
-      >
-        创建草稿
-      </button></template
-    ></Modal
-  >
-  <Modal v-if="editSteps" title="编辑课程步骤" wide @close="editSteps = false"
-    ><div class="form-stack">
-      <div v-for="(st, i) in stepsDraft" :key="st.id" class="form-grid">
-        <label class="field"
-          ><span>{{ st.id }} · 步骤名称</span><input v-model="st.name" /></label
-        ><label class="field"
-          ><span>操作说明</span><input v-model="st.description"
-        /></label>
-      </div>
-    </div>
-    <template #footer
-      ><button class="btn secondary" @click="editSteps = false">取消</button
-      ><button class="btn primary" @click="saveSteps">
-        保存步骤
-      </button></template
-    ></Modal
-  >
+  <CourseBuilder v-else-if="isCourse" :domain="domain" />
   <Modal v-if="stationForm" title="新增模拟台位" @close="stationForm = false"
     ><div class="form-stack">
       <label class="field"

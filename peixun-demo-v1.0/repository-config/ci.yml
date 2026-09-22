@@ -1,0 +1,38 @@
+name: Demo validation
+on:
+  push:
+  pull_request:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: peixun-demo-v1.0/source
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: peixun-demo-v1.0/source/frontend/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+      - run: npm ci
+        working-directory: peixun-demo-v1.0/source/frontend
+      - run: npm run build
+        working-directory: peixun-demo-v1.0/source/frontend
+      - run: mvn -B -ntp -f backend/pom.xml verify
+      - run: npx playwright install --with-deps chromium
+        working-directory: peixun-demo-v1.0/source/frontend
+      - run: node scripts/verify-browser.mjs
+      - run: node scripts/verify-training-workflow.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo-verification
+          path: |
+            peixun-demo-v1.0/source/backend/target/surefire-reports
+            peixun-demo-v1.0/source/test-results

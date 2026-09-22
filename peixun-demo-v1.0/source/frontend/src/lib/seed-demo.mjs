@@ -91,7 +91,8 @@ export async function seedDemo(
       await cmd("LEARNER_A", "training.action", {
         id: a.id,
         stepId: step.id,
-        target: "PUMP-01",
+        target: step.target,
+        actionId: step.actionId,
         kind: "PASS",
       });
     await cmd("INSTRUCTOR", "training.confirm", { id: a.id });
