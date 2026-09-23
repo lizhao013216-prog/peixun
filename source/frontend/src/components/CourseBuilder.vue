@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { store, command, login, notify } from "../store";
 import { pathForFeature } from "../catalog";
 import { systemName, type SystemId } from "../domain";
@@ -46,6 +46,9 @@ const templates = computed(() =>
     (item: any) => item.status === "PUBLISHED" && item.sceneSnapshot,
   ),
 );
+const stations = computed(() =>
+  (s.value.stations || []).filter((item: any) => item.domain === props.domain),
+);
 const boundTemplate = computed(() => {
   const ref = course.value?.environment?.templateRef;
   return templates.value.find(
@@ -67,24 +70,36 @@ const creating = ref(false),
   preview = ref(false),
   assigning = ref(false),
   previewResult = ref<any>(null),
+  previewSession = ref<any>(null),
+  previewStates = ref<Record<string, any>>({}),
   stepIndex = ref(0),
   draggedStep = ref(-1),
   validationReport = ref<any>(null);
 const draft = ref<any>({ name: "", description: "", mode: "GUIDED", scoreRule: {}, steps: [] }),
+  supportPreset = ref("PUMP_DELAY"),
   newName = ref(""),
   newDescription = ref(""),
   curriculumName = ref(""),
   curriculumObjective = ref(""),
   unitName = ref("第一课时"),
+  existingCurriculumId = ref(""),
+  existingUnitId = ref(""),
+  newUnitName = ref(""),
   templateId = ref(""),
   rebindTemplateId = ref(""),
   contractVersion = ref("V3"),
   requestId = ref(""),
   learner = ref("LEARNER_A"),
+  assignmentMode = ref("GUIDED"),
+  assignmentDueAt = ref(""),
+  assignmentStationId = ref(""),
+  baseEditRevision = ref(0),
   reviewComment = ref("");
 const assigned = computed(() =>
   s.value.assignments.filter((a: any) => a.courseId === course.value?.id),
 );
+const curricula = computed(() => (s.value.curricula || []).filter((item: any) => item.domain === props.domain));
+const selectedCurriculum = computed(() => curricula.value.find((item: any) => item.id === existingCurriculumId.value));
 const job = computed(() =>
   s.value.jobs.filter((j: any) => j.targetId === course.value?.id).at(-1),
 );
@@ -138,9 +153,13 @@ const dirty = computed(
       description: course.value.description,
       mode: course.value.mode || "GUIDED",
       scoreRule: course.value.scoreRule || {},
+      supportCaseSnapshot: course.value.supportCaseSnapshot || null,
       steps: modern.value ? course.value.steps : course.value.steps.map(lessonStep),
     }) !== JSON.stringify(draft.value),
 );
+watch(dirty, (value) => { store.unsavedContext = value && course.value?.status === "DRAFT" ? `课件“${draft.value.name || course.value?.name}”` : ""; });
+onBeforeRouteLeave(() => !dirty.value || course.value?.status !== "DRAFT" || confirm("课件存在未保存修改，离开后将丢失。是否继续？"));
+onBeforeUnmount(() => { if (store.unsavedContext.startsWith("课件")) store.unsavedContext = ""; });
 const phase = computed(() =>
   !course.value
     ? 0
@@ -196,16 +215,19 @@ const stageCopy = computed(() => {
   ];
 });
 function sync() {
-  if (course.value)
+  if (course.value) {
+    baseEditRevision.value = course.value.editRevision || 0;
     draft.value = {
       name: course.value.name,
       description: course.value.description,
       mode: course.value.mode || "GUIDED",
       scoreRule: JSON.parse(JSON.stringify(course.value.scoreRule || { total: 100, errorPenalty: 5, helpPenalty: 2 })),
+      supportCaseSnapshot: course.value.supportCaseSnapshot ? JSON.parse(JSON.stringify(course.value.supportCaseSnapshot)) : null,
       steps: modern.value
         ? JSON.parse(JSON.stringify(course.value.steps))
         : course.value.steps.map(lessonStep),
     };
+  }
   stepIndex.value = 0;
 }
 watch(() => course.value?.id, sync, { immediate: true });
@@ -252,6 +274,8 @@ function newCourse() {
   curriculumName.value = newName.value;
   curriculumObjective.value = newDescription.value;
   unitName.value = "第一课时";
+  existingCurriculumId.value = "";
+  existingUnitId.value = "";
   templateId.value = templates.value[0]?.id || "";
   contractVersion.value = "V3";
   requestId.value = "";
@@ -268,9 +292,11 @@ async function create() {
     isModern
       ? {
           domain: props.domain,
-          curriculumName: curriculumName.value,
-          curriculumObjective: curriculumObjective.value,
-          unitName: unitName.value,
+          curriculumId: existingCurriculumId.value,
+          unitId: existingUnitId.value,
+          curriculumName: existingCurriculumId.value ? "" : curriculumName.value,
+          curriculumObjective: existingCurriculumId.value ? "" : curriculumObjective.value,
+          unitName: existingCurriculumId.value ? "" : unitName.value,
           name: newName.value,
           description: newDescription.value,
           templateId: templateId.value,
@@ -298,10 +324,11 @@ async function save() {
   const r = await command(
     modern.value ? "courseware.save" : "course.save",
     modern.value
-      ? { id: course.value.id, expectedEditRevision: course.value.editRevision, ...draft.value }
+      ? { id: course.value.id, expectedEditRevision: baseEditRevision.value, ...draft.value }
       : { id: course.value.id, ...draft.value },
     "课程内容已保存",
   );
+  if (r) baseEditRevision.value = r.editRevision || baseEditRevision.value;
   return !!r;
 }
 async function submit() {
@@ -322,17 +349,24 @@ async function openPreview() {
     }
   }
   previewResult.value = null;
+  if (modern.value) {
+    previewSession.value = await command("coursewarePreview.start", { id: course.value.id }, "");
+    if (!previewSession.value) return;
+    previewStates.value = previewSession.value.states || {};
+    stepIndex.value = previewSession.value.currentStep || 0;
+  }
   preview.value = true;
 }
 async function tryPreview(p: any) {
   const st = current.value;
-  if (modern.value && p.target === st.target && p.actionId === st.actionId) {
-    const result = await command("courseware.preview", { id: course.value.id, stepId: st.id }, "");
+  if (modern.value) {
+    const result = await command("coursewarePreview.action", { previewId: previewSession.value?.id, stepId: st.id, ...p }, "");
     if (result)
       previewResult.value = {
         ok: result.passed,
-        message: result.event?.reason || st.expectedResult,
+        message: result.reason || result.event?.reason || st.expectedResult,
       };
+    if (result) previewStates.value = result.states || previewStates.value;
     return;
   }
   previewResult.value = {
@@ -346,10 +380,30 @@ async function tryPreview(p: any) {
 async function assign() {
   const r = await command(
     "training.assign",
-    { courseId: course.value.id, learnerId: learner.value },
+    { courseId: course.value.id, learnerId: learner.value, mode: assignmentMode.value, dueAt: assignmentDueAt.value, stationId: assignmentStationId.value },
     "培训任务已分配",
   );
   if (r) assigning.value = false;
+}
+async function addCurriculumUnit() {
+  if (!curriculum.value || !newUnitName.value.trim()) return;
+  const result = await command("curriculum.unit.add", { id: curriculum.value.id, name: newUnitName.value, objective: curriculum.value.objective }, "课时已加入当前课程");
+  if (result) newUnitName.value = "";
+}
+async function continuePreview() {
+  if (!previewResult.value?.ok || !previewSession.value) return;
+  const result = await command("coursewarePreview.continue", { previewId: previewSession.value.id }, "");
+  if (!result) return;
+  previewSession.value = result;
+  previewStates.value = result.states || previewStates.value;
+  stepIndex.value = Math.min(result.currentStep || 0, draft.value.steps.length - 1);
+  previewResult.value = null;
+}
+async function closePreview() {
+  if (modern.value && previewSession.value?.id)
+    await command("coursewarePreview.close", { previewId: previewSession.value.id }, "");
+  preview.value = false;
+  previewSession.value = null;
 }
 async function revise() {
   const r = await command(
@@ -363,8 +417,16 @@ async function revise() {
   }
 }
 function addStep() {
-  draft.value.steps.push({ id: `STEP-${crypto.randomUUID()}`, name: `步骤${draft.value.steps.length + 1}`, description: "", target: "", actionId: "", actionLabel: "", parameters: {}, precondition: null, completion: { kind: "ACTION_SUCCEEDED" }, expectedResult: "", points: 0, mode: draft.value.mode || "GUIDED" });
+  draft.value.steps.push({ id: `STEP-${crypto.randomUUID()}`, name: `步骤${draft.value.steps.length + 1}`, description: "", target: "", actionId: "", actionLabel: "", parameters: {}, precondition: null, completion: { kind: "ACTION_SUCCEEDED" }, expectedResult: "", points: 0, mode: draft.value.mode || "GUIDED", ...(props.domain === 'SUPPORT' ? { supportKind: 'TASK_CONFIRM' } : {}) });
   stepIndex.value = draft.value.steps.length - 1;
+}
+function applySupportPreset() {
+  if (!draft.value.supportCaseSnapshot) return;
+  if (supportPreset.value === "REMOTE_REPAIR") {
+    Object.assign(draft.value.supportCaseSnapshot, { name: "远端控制柜抢修与人员调度", taskObject: "演示站B · 远端控制柜", scope: "控制柜故障检查、工具与人员资源调配", deadline: 333, arrivalTime: 120, transportCost: 80 });
+  } else {
+    Object.assign(draft.value.supportCaseSnapshot, { name: "泵组保障方案编制与延迟事件处置", taskObject: "演示船A · 通用泵组", scope: "泵组保障资源、工序与延迟到货处置", deadline: 270, arrivalTime: 90, transportCost: 100 });
+  }
 }
 function copyStep() {
   if (!current.value) return;
@@ -430,7 +492,8 @@ function selectConditionField() {
 }
 async function rebind() {
   if (!rebindTemplateId.value || rebindTemplateId.value === boundTemplate.value?.id) return;
-  const result = await command("courseware.rebind", { id: course.value.id, expectedEditRevision: course.value.editRevision, templateId: rebindTemplateId.value }, "课件环境已更换，请处理受影响步骤");
+  const result = await command("courseware.rebind", { id: course.value.id, expectedEditRevision: baseEditRevision.value, templateId: rebindTemplateId.value }, "课件环境已更换，请处理受影响步骤");
+  if (result) baseEditRevision.value = result.editRevision || baseEditRevision.value;
   if (result?.environmentIssues?.length) notify(result.environmentIssues[0], "error");
 }
 </script>
@@ -479,6 +542,7 @@ async function rebind() {
     ><Badge :status="course?.status" /><span class="spacer"></span
     ><span>共 {{ courses.length }} 个课程版本</span>
   </div>
+  <section v-if="modern && curriculum" class="panel panel-body"><div class="panel-header"><div><h3>{{ curriculum.name }}</h3><small>{{ curriculum.objective }} · 面向 {{ curriculum.audience }}</small></div><span class="pill">{{ curriculum.units?.length || 0 }} 个课时</span></div><div class="relation-list"><div v-for="item in curriculum.units || []" :key="item.id" class="relation-row"><b>第{{ item.order }}课时 · {{ item.name }}</b><span>{{ item.id }}</span><small>{{ item.id === unit?.id ? `当前课件位于本课时` : '可在新建课件时选择' }}</small></div></div><div v-if="canEdit" class="button-row"><input v-model="newUnitName" placeholder="新增课时名称" /><button class="btn secondary" :disabled="!newUnitName.trim()" @click="addCurriculumUnit"><Icon name="Plus" :size="15" />新增课时</button></div></section>
   <section class="course-next-action">
     <div>
       <h3>{{ stageCopy[0] }}</h3>
@@ -682,6 +746,9 @@ async function rebind() {
       <div v-if="issues.length" class="info-note warning">
         {{ issues[0] }}。完善后才能提交审核和预览。
       </div>
+      <div v-if="modern && domain === 'SUPPORT' && draft.supportCaseSnapshot" class="panel-body form-stack">
+        <div class="form-grid"><label class="field"><span>案例模板</span><select v-model="supportPreset" :disabled="!editable" @change="applySupportPreset"><option value="PUMP_DELAY">泵组延迟到货案例</option><option value="REMOTE_REPAIR">远端控制柜抢修案例</option></select></label><label class="field"><span>教学案例名称</span><input v-model="draft.supportCaseSnapshot.name" :disabled="!editable" /></label><label class="field"><span>任务对象</span><input v-model="draft.supportCaseSnapshot.taskObject" :disabled="!editable" /></label><label class="field"><span>完成时限（分钟）</span><input v-model.number="draft.supportCaseSnapshot.deadline" type="number" min="1" :disabled="!editable" /></label><label class="field full"><span>任务范围</span><textarea v-model="draft.supportCaseSnapshot.scope" :disabled="!editable" /></label><label class="field"><span>预计到货（分钟）</span><input v-model.number="draft.supportCaseSnapshot.arrivalTime" type="number" min="0" :disabled="!editable" /></label><label class="field"><span>运输费用</span><input v-model.number="draft.supportCaseSnapshot.transportCost" type="number" min="0" :disabled="!editable" /></label></div>
+      </div>
       <div v-if="modern" class="panel-body form-grid score-rule-fields">
         <label class="field"><span>课件总分</span><input v-model.number="draft.scoreRule.total" type="number" min="1" :disabled="!editable" /></label>
         <label class="field"><span>每次错误扣分</span><input v-model.number="draft.scoreRule.errorPenalty" type="number" min="0" :disabled="!editable" /></label>
@@ -745,6 +812,7 @@ async function rebind() {
           <div v-if="modern" class="form-grid">
             <label class="field"><span>本步分值</span><input v-model.number="current.points" type="number" min="1" :disabled="!editable" /></label>
             <label class="field"><span>教学模式</span><select v-model="current.mode" :disabled="!editable"><option value="GUIDED">引导</option><option value="FREE">自由</option><option value="DEMONSTRATION">演示</option></select></label>
+            <label v-if="domain === 'SUPPORT'" class="field"><span>保障教学动作</span><select v-model="current.supportKind" :disabled="!editable"><option value="TASK_CONFIRM">确认任务</option><option value="RESOURCE_CONFIGURE">配置资源</option><option value="PLAN_EDIT">编制工序</option><option value="PLAN_CALCULATE">计算验证</option><option value="EVENT_HANDLE">事件处置</option><option value="REVIEW_SUBMIT">提交复盘</option></select></label>
           </div>
           <div v-if="modern" class="step-condition-editor">
             <div class="rule-card-head"><div><Icon name="GitBranch" :size="18" /><b>前置状态条件（可选）</b></div><button v-if="editable && !current.precondition" class="text-btn" @click="addCondition">添加条件</button><button v-else-if="editable" class="text-btn danger" @click="current.precondition = null">移除条件</button></div>
@@ -806,7 +874,7 @@ async function rebind() {
   </template>
   <Modal
     v-if="creating"
-    :title="domain === 'OPERATION' ? '新建操作课件' : '新建维修课件'"
+    :title="`新建${systemName(domain)}课件`"
     @close="creating = false"
     ><div class="form-stack">
       <label class="field"
@@ -815,9 +883,11 @@ async function rebind() {
         ><span>教学目标 *</span><textarea v-model="newDescription" /></label
       ><label class="field"><span>课件契约</span><select v-model="contractVersion"><option value="V3">V3 · 绑定模板与自由步骤</option><option value="V2">V2 · 原训练兼容课件</option></select></label>
       <template v-if="contractVersion === 'V3'">
-        <label class="field"><span>课程组织名称 *</span><input v-model="curriculumName" /></label>
-        <label class="field"><span>应掌握的能力 *</span><textarea v-model="curriculumObjective" /></label>
-        <label class="field"><span>课时名称 *</span><input v-model="unitName" /></label>
+        <label class="field"><span>加入已有课程（可选）</span><select v-model="existingCurriculumId" @change="existingUnitId = selectedCurriculum?.units?.[0]?.id || ''"><option value="">新建课程组织</option><option v-for="item in curricula" :key="item.id" :value="item.id">{{ item.name }} · {{ item.units?.length || 0 }}课时</option></select></label>
+        <label v-if="existingCurriculumId" class="field"><span>选择课时 *</span><select v-model="existingUnitId"><option v-for="item in selectedCurriculum?.units || []" :key="item.id" :value="item.id">第{{ item.order }}课时 · {{ item.name }}</option></select></label>
+        <label v-if="!existingCurriculumId" class="field"><span>课程组织名称 *</span><input v-model="curriculumName" /></label>
+        <label v-if="!existingCurriculumId" class="field"><span>应掌握的能力 *</span><textarea v-model="curriculumObjective" /></label>
+        <label v-if="!existingCurriculumId" class="field"><span>课时名称 *</span><input v-model="unitName" /></label>
         <label class="field"><span>仿真环境模板 *</span><select v-model="templateId"><option value="">请选择已发布模板</option><option v-for="item in templates" :key="item.id" :value="item.id">{{ item.name }} · V{{ item.version }} · {{ item.sceneSnapshot.objects.length }}对象</option></select></label>
       </template>
       <label v-if="contractVersion === 'V2' && domain === 'MAINTENANCE'" class="field"
@@ -841,7 +911,7 @@ async function rebind() {
       ><button class="btn secondary" @click="creating = false">取消</button
       ><button
         class="btn primary"
-        :disabled="!newName.trim() || !newDescription.trim() || (contractVersion === 'V3' && (!curriculumName.trim() || !curriculumObjective.trim() || !unitName.trim() || !templateId)) || store.busy > 0"
+        :disabled="!newName.trim() || !newDescription.trim() || (contractVersion === 'V3' && ((!existingCurriculumId && (!curriculumName.trim() || !curriculumObjective.trim() || !unitName.trim())) || (existingCurriculumId && !existingUnitId) || !templateId)) || store.busy > 0"
         @click="create"
       >
         创建草稿
@@ -852,7 +922,7 @@ async function rebind() {
     v-if="preview"
     title="学员视角预览 · 不计成绩"
     wide
-    @close="preview = false"
+    @close="closePreview"
     ><div class="preview-notice">
       当前预览第
       {{ stepIndex + 1 }}
@@ -870,17 +940,18 @@ async function rebind() {
       :key="stepIndex"
       :step="current"
       :objects="modern ? availableObjects : undefined"
+      :states="modern ? previewStates : undefined"
+      :topology="modern ? boundTemplate?.topologySnapshot : undefined"
+      :domain="domain"
+      :scene-title="`${systemName(domain)} · ${course.name}`"
       @submit="tryPreview"
     /><template #footer
-      ><button class="btn secondary" @click="preview = false">
+      ><button class="btn secondary" @click="closePreview">
         返回课件制作</button
       ><button
         class="btn primary"
-        :disabled="stepIndex >= draft.steps.length - 1"
-        @click="
-          stepIndex++;
-          previewResult = null;
-        "
+        :disabled="!previewResult?.ok || stepIndex >= draft.steps.length - 1"
+        @click="continuePreview"
       >
         预览下一步
       </button></template
@@ -903,6 +974,9 @@ async function rebind() {
           </option>
         </select></label
       >
+      <label class="field"><span>训练模式</span><select v-model="assignmentMode"><option value="GUIDED">引导训练</option><option value="FREE">自由训练</option><option value="DEMONSTRATION">演示讲解（不计分）</option></select></label>
+      <label class="field"><span>完成期限</span><input v-model="assignmentDueAt" type="datetime-local" /></label>
+      <label class="field"><span>指定台位（可选）</span><select v-model="assignmentStationId"><option value="">无需指定台位</option><option v-for="station in stations" :key="station.id" :value="station.id">{{ station.name }} · {{ station.status === 'CONNECTED' ? '已连接' : '未连接' }}</option></select></label>
       <p>
         分配后学员将在“培训任务”中看到课程；任务会记录课程版本，成绩由学员实际操作产生。
       </p>

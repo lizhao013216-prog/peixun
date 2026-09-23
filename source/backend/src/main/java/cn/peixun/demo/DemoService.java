@@ -172,7 +172,7 @@ public class DemoService {
       result = SimulationTemplateService.apply(s, action, p, actor, domain);
     else if (action.startsWith("simulationTopology.") || action.startsWith("simulationPreview."))
       result = SimulationRuntimeService.apply(s, action, p, actor, domain);
-    else if (action.startsWith("curriculum.") || action.startsWith("courseware."))
+    else if (action.startsWith("curriculum.") || action.startsWith("courseware.") || action.startsWith("coursewarePreview."))
       result = CoursewareService.apply(s, action, p, actor, domain);
     else if (action.startsWith("training.support."))
       result = SupportTrainingService.apply(s, action, p, actor, commandId);
@@ -261,7 +261,7 @@ public class DemoService {
     else if (action.startsWith("simulationTemplate.")) allowed = Set.of("AUTHOR", "INSTRUCTOR");
     else if (action.startsWith("simulationTopology.") || action.startsWith("simulationPreview."))
       allowed = Set.of("AUTHOR", "INSTRUCTOR");
-    else if (action.startsWith("curriculum.") || action.startsWith("courseware."))
+    else if (action.startsWith("curriculum.") || action.startsWith("courseware.") || action.startsWith("coursewarePreview."))
       allowed = Set.of("AUTHOR", "INSTRUCTOR");
     else if (action.matches("(asset|scene|topology|template|station|course)\\..*"))
       allowed = Set.of("AUTHOR", "INSTRUCTOR");
@@ -293,6 +293,21 @@ public class DemoService {
             .contains(collection),
         "不支持的报告类型");
     ObjectNode s = state(workspace), record = find(s, collection, id);
+    String trainingSummary = "";
+    if (collection.equals("attempts") || collection.equals("trainingArchives")) {
+      JsonNode courseRef = collection.equals("trainingArchives") ? record.path("courseRef") : obj("id", record.path("courseId"), "version", record.path("courseVersion"));
+      StringBuilder evidence = new StringBuilder("\n## 训练证据摘要\n\n| 序号 | 对象 / 动作 | 结果 | 说明 | 分数变化 |\n| --- | --- | --- | --- | --- |\n");
+      for (JsonNode event : record.withArray("events"))
+        evidence.append("| ").append(event.path("sequence").asInt()).append(" | ")
+            .append(event.path("objectId").asText("—")).append(" / ").append(event.path("actionId").asText("—")).append(" | ")
+            .append(event.path("result").asText("—")).append(" | ").append(event.path("reason").asText(event.path("message").asText()).replace("|", "\\|")).append(" | ")
+            .append(event.path("scoreDelta").asText("0")).append(" |\n");
+      trainingSummary = "\n## 普通用户摘要\n\n- 学员：" + record.path("learnerId").asText("—")
+          + "\n- 课件：" + courseRef.path("id").asText("—") + " · V" + courseRef.path("version").asInt()
+          + "\n- 成绩：" + record.path("score").asText("不计分")
+          + "\n- 训练状态：" + record.path("status").asText(collection.equals("trainingArchives") ? "已确认归档" : "已完成")
+          + "\n" + evidence;
+    }
     return "# 保障业务共性平台 · 业务记录报告\n\n"
         + "- 报告对象："
         + id
@@ -304,7 +319,9 @@ public class DemoService {
         + s.path("epoch").asInt()
         + "\n- 种子版本：demo-1.0\n- 生成时间："
         + Instant.now()
-        + "\n- 数据性质：合成数据 / 平台能力模拟 / 非实际工程结果\n\n## 保存的业务记录\n\n```json\n"
+        + "\n- 数据性质：合成数据 / 平台能力模拟 / 非实际工程结果\n"
+        + trainingSummary
+        + "\n## 技术详情（保存的结构化记录）\n\n```json\n"
         + record.toPrettyString()
         + "\n"
         + "```\n\n"

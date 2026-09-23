@@ -9,12 +9,27 @@ public final class SimulationCapabilities {
   private SimulationCapabilities() {}
 
   public static void enrichAsset(ObjectNode asset) {
-    String component = asset.path("componentId").asText("GENERIC").toUpperCase();
+    String component = asset.path("capabilityTemplate").asText().toUpperCase();
+    if (component.isBlank()) component = asset.path("componentId").asText("GENERIC").toUpperCase();
     if (component.contains("PUMP")) pump(asset);
     else if (component.contains("VALVE")) valve(asset);
     else if (component.contains("SENSOR")) sensor(asset);
     else if (component.contains("CTRL")) controller(asset);
     else generic(asset);
+    if (!asset.path("capabilityTemplate").isTextual()) asset.put("capabilityTemplate", component);
+    if (!asset.path("visual").isObject())
+      asset.set("visual", obj("symbolKey", symbol(component), "width", 120, "height", 86, "labelPosition", "BOTTOM"));
+    if (!asset.path("initialState").isObject()) asset.set("initialState", obj("status", "READY"));
+  }
+
+  private static String symbol(String component) {
+    if (component.contains("PUMP")) return "PUMP";
+    if (component.contains("VALVE")) return "VALVE";
+    if (component.contains("SENSOR")) return "SENSOR";
+    if (component.contains("CTRL")) return "CONTROL";
+    if (component.contains("TOOL")) return "TOOL";
+    if (component.contains("BENCH")) return "WORKBENCH";
+    return "GENERIC";
   }
 
   public static void enrichObject(ObjectNode object, ObjectNode asset) {
@@ -22,6 +37,8 @@ public final class SimulationCapabilities {
     object.set("actions", asset.path("actions").deepCopy());
     object.set("ports", asset.path("ports").deepCopy());
     object.set("stateFields", asset.path("stateFields").deepCopy());
+    object.set("visual", asset.path("visual").deepCopy());
+    object.put("capabilityTemplate", asset.path("capabilityTemplate").asText("GENERIC"));
   }
 
   private static void pump(ObjectNode asset) {

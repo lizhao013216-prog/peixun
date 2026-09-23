@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { lessonStep, trainingObjects, objectName } from "../lesson";
-import SceneView from "./SceneView.vue";
+import EquipmentSceneView from "./EquipmentSceneView.vue";
 import Icon from "./Icon.vue";
 const props = defineProps<{
   step: any;
   objects?: any[];
   states?: Record<string, any>;
+  topology?: any;
+  domain?: string;
+  sceneTitle?: string;
   disabled?: boolean;
   free?: boolean;
   state?: string;
@@ -25,7 +28,7 @@ const availableActions = computed(() => selectedDefinition.value?.actions || [])
 const selectedActionDefinition = computed(() => availableActions.value.find((item: any) => item.id === selectedAction.value));
 function defaultValue(definition: any) {
   const expected = props.step?.parameters || {};
-  if (selectedAction.value === info.value?.actionId && definition.id in expected) return expected[definition.id];
+  if (!props.free && selectedAction.value === info.value?.actionId && definition.id in expected) return expected[definition.id];
   return definition.valueType === "BOOLEAN" ? false : definition.valueType === "NUMBER" ? 0 : "";
 }
 function selectAction() {
@@ -34,7 +37,7 @@ function selectAction() {
 function selectObject(id: string) {
   selectedObject.value = id;
   const actions = availableObjects.value.find((item: any) => item.id === id)?.actions || [];
-  selectedAction.value = id === info.value?.target && actions.some((item: any) => item.id === info.value?.actionId)
+  selectedAction.value = !props.free && id === info.value?.target && actions.some((item: any) => item.id === info.value?.actionId)
     ? info.value.actionId
     : actions[0]?.id || info.value?.actionId || "";
   selectAction();
@@ -51,14 +54,17 @@ watch(
 <template>
   <div v-if="info" class="lesson-workspace">
     <div class="lesson-scene">
-      <div v-if="objects?.length" class="courseware-object-canvas">
-        <button v-for="object in availableObjects" :key="object.id" type="button" :class="{ selected: selectedObject === object.id }" @click="selectObject(object.id)">
-          <Icon :name="object.icon || 'Box'" :size="25" /><b>{{ object.name }}</b><small>{{ object.id }}</small>
-        </button>
-      </div>
-      <SceneView v-else
-        :selected="selectedObject"
-        :state="state"
+      <EquipmentSceneView
+        :context-id="`lesson-${step?.id || 'step'}`"
+        :domain="domain || 'OPERATION'"
+        :title="sceneTitle || '训练设备场景'"
+        :scene="{ objects: availableObjects, environment: {} }"
+        :topology="topology"
+        :states="states"
+        :selected-object-id="selectedObject"
+        :target-object-id="free ? '' : info.target"
+        mode="training"
+        compact
         @select="selectObject($event)"
       />
       <p>点击场景对象或右侧对象按钮进行选择。场景动作为虚拟平台示意。</p>

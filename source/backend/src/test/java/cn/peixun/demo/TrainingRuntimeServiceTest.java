@@ -77,16 +77,43 @@ class TrainingRuntimeServiceTest {
     assertTrue(attempt.path("awaitingContinue").asBoolean());
     apply(state, "training.continue", obj("id", attempt.path("id").asText()), "LEARNER_A", "OPERATION", "C10");
     apply(state, "training.confirm", obj("id", attempt.path("id").asText()), "INSTRUCTOR", "OPERATION", "C11");
+    apply(state, "training.confirm", obj("id", attempt.path("id").asText()), "REVIEW_TEACHER", "OPERATION", "C11-B");
     assertEquals(attempt.path("id").asText(), assignment.path("evidenceAttemptId").asText());
     assertEquals(1, state.withArray("trainingArchives").size());
+    assertThrows(BusinessException.class, () -> apply(state, "training.station.signal", obj("id", station.path("id").asText(), "attemptId", attempt.path("id").asText(), "point", "dial.value"), "LEARNER_A", "OPERATION", "C11-C"));
 
     ObjectNode retraining = apply(state, "training.start", obj("assignmentId", assignment.path("id").asText()), "LEARNER_A", "OPERATION", "C12");
     assertNotEquals(attempt.path("id").asText(), retraining.path("id").asText());
     assertFalse(assignment.path("confirmed").asBoolean());
-    assertTrue(assignment.path("evidenceAttemptId").isMissingNode());
+    assertEquals(attempt.path("id").asText(), assignment.path("evidenceAttemptId").asText());
+    assertEquals(attempt.path("id").asText(), assignment.path("confirmedAttemptIds").get(0).asText());
     assertEquals("COMPLETED", attempt.path("status").asText());
     assertEquals(1, state.withArray("trainingArchives").size());
     assertThrows(BusinessException.class, () -> apply(state, "training.action", obj("id", retraining.path("id").asText(), "target", "SENSOR-01", "actionId", "SET_VALUE", "parameters", obj("value", 0.5)), "LEARNER_B", "OPERATION", "C13"));
+  }
+
+  @Test
+  void secondInstructorRoleCanOperateWithoutUsingTheHardCodedAccountId() {
+    ObjectNode state = fixture();
+    state.withArray("courses").add(course("COURSE", 0.6));
+    ObjectNode assignment = apply(state, "training.assign", obj("courseId", "COURSE", "learnerId", "LEARNER_A"), "REVIEW_TEACHER", "OPERATION", "R1");
+    ObjectNode attempt = apply(state, "training.start", obj("assignmentId", assignment.path("id").asText()), "REVIEW_TEACHER", "OPERATION", "R2");
+    operate(state, attempt, "REVIEW_TEACHER", 0.5, "R3");
+    assertTrue(attempt.path("awaitingContinue").asBoolean());
+  }
+
+  @Test
+  void assignedStationMustMatchTheFrozenCourseEnvironmentAndBeConnectedAtStart() {
+    ObjectNode state = fixture();
+    state.withArray("courses").add(course("COURSE", 0.6));
+    ObjectNode incompatible = apply(state, "training.station.save", obj("domain", "OPERATION", "mappings", arr(obj("point", "bad", "objectId", "SENSOR-01", "actionId", "UNKNOWN", "parameters", obj()))), "INSTRUCTOR", "OPERATION", "S1");
+    assertThrows(BusinessException.class, () -> apply(state, "training.assign", obj("courseId", "COURSE", "learnerId", "LEARNER_A", "stationId", incompatible.path("id").asText()), "INSTRUCTOR", "OPERATION", "S2"));
+
+    ObjectNode station = apply(state, "training.station.save", obj("domain", "OPERATION", "mappings", arr(obj("point", "dial.value", "objectId", "SENSOR-01", "actionId", "SET_VALUE", "parameters", obj("value", 0.5)))), "INSTRUCTOR", "OPERATION", "S3");
+    ObjectNode assignment = apply(state, "training.assign", obj("courseId", "COURSE", "learnerId", "LEARNER_A", "stationId", station.path("id").asText()), "INSTRUCTOR", "OPERATION", "S4");
+    assertThrows(BusinessException.class, () -> apply(state, "training.start", obj("assignmentId", assignment.path("id").asText()), "LEARNER_A", "OPERATION", "S5"));
+    apply(state, "training.station.connect", obj("id", station.path("id").asText()), "INSTRUCTOR", "OPERATION", "S6");
+    assertEquals("RUNNING", apply(state, "training.start", obj("assignmentId", assignment.path("id").asText()), "LEARNER_A", "OPERATION", "S7").path("status").asText());
   }
 
   private static ObjectNode apply(ObjectNode state, String action, ObjectNode payload, String actor, String domain, String commandId) {

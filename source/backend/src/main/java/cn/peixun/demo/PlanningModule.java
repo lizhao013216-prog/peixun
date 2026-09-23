@@ -15,6 +15,14 @@ public final class PlanningModule {
       case "task.create" -> {
         String name = p.path("name").asText().trim();
         require(!name.isEmpty(), "请填写任务名称");
+        if (!p.path("sourceIssueId").asText().isBlank()) {
+          ObjectNode issue = find(s, "issues", p.path("sourceIssueId").asText());
+          require(issue.path("type").asText().equals("EQUIPMENT_SUPPORT"), "只有核实后的疑似保障问题可以转保障任务");
+          require(issue.path("verified").asBoolean(), "疑似保障问题必须先完成核实并通过统一问题处理入口转换");
+          if (!issue.path("linkedTaskId").asText().isBlank())
+            return find(s, "tasks", issue.path("linkedTaskId").asText());
+          throw new BusinessException(409, "ISSUE_ROUTE_REQUIRED", "请从问题处理页使用统一的转保障任务操作");
+        }
         ObjectNode t =
             obj(
                 "id",
@@ -22,9 +30,9 @@ public final class PlanningModule {
                 "name",
                 name,
                 "equipmentId",
-                "EQ-DEMO-01",
+                p.path("equipmentId").asText("EQ-DEMO-01"),
                 "equipmentType",
-                "PUMP",
+                p.path("equipmentType").asText("PUMP"),
                 "taskType",
                 p.path("taskType").asText("维修"),
                 "deadline",

@@ -124,7 +124,7 @@ try {
   assert.ok((await page.locator(".template-detail").innerText()).includes("PUMP-01"));
   assert.ok(!(await page.locator(".template-detail").innerText()).includes("V2泵组对象"));
   await page.locator("button.template-version").filter({ hasText: "V2" }).click();
-  await page.getByText("V2泵组对象", { exact: true }).waitFor();
+  await page.getByText("V2泵组对象", { exact: true }).first().waitFor();
   await page.screenshot({ path: path.join(output, "p2c-template-versions.png"), fullPage: true });
 
   current = await state(admin);

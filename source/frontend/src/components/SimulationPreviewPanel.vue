@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { store, command } from "../store";
 import Icon from "./Icon.vue";
 import Badge from "./Badge.vue";
+import EquipmentSceneView from "./EquipmentSceneView.vue";
 
 const props = defineProps<{ project?: any; scene?: any; template?: any }>();
 const selectedPreviewId = ref("");
@@ -75,4 +76,5 @@ const stateText = (objectId: string) => JSON.stringify(preview.value?.states?.[o
     <div class="panel-header"><div><h3>调试事件</h3><small>按顺序显示输入、命中规则、前后状态和拒绝原因</small></div><span>{{ preview.events.length }} 条</span></div>
     <div class="panel-body event-list"><article v-for="event in [...preview.events].reverse()" :key="event.id" :class="event.result"><div class="event-sequence">#{{ event.sequence }}</div><div><b>{{ event.actionId }}</b><p>{{ event.reason }}</p><small v-if="event.matchedRules?.length">命中规则：{{ event.matchedRules.map((item: any) => item.id).join('、') }}</small></div><Badge :status="event.result" /><details><summary>查看前后状态</summary><pre>{{ JSON.stringify({ before: event.beforeState, after: event.afterState }, null, 2) }}</pre></details></article><div v-if="!preview.events.length" class="object-empty">执行动作后将在这里形成可解释记录。</div></div>
   </section>
+  <EquipmentSceneView v-if="preview" :context-id="preview.id" :domain="preview.domain" :title="`${template?.name || project?.name || '工程调试'} · 实时状态`" :scene="{ objects, environment: scene?.environment || template?.sceneSnapshot?.environment || {} }" :topology="preview.topologySnapshot" :states="preview.states" :selected-object-id="selectedObjectId" mode="preview" show-relations @select="selectedObjectId = $event" />
 </template>

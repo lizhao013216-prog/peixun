@@ -10,6 +10,7 @@ import Badge from "../components/Badge.vue";
 import Modal from "../components/Modal.vue";
 import DeviceRelationsEditor from "../components/DeviceRelationsEditor.vue";
 import SimulationPreviewPanel from "../components/SimulationPreviewPanel.vue";
+import EquipmentSceneView from "../components/EquipmentSceneView.vue";
 
 const props = defineProps<{ page: PageMeta }>();
 const route = useRoute();
@@ -17,6 +18,10 @@ const router = useRouter();
 const tab = ref(String(route.query.tab || "scene"));
 const draft = ref<any>(null);
 const baseline = ref("");
+const baseEditRevision = ref(0);
+const relationDirty = ref(false);
+const relationDraft = ref<any>(null);
+const relationsEditor = ref<any>(null);
 const selectedIndex = ref(0);
 const adding = ref(false);
 const assetId = ref("");
@@ -32,7 +37,8 @@ const topology = computed(() => (store.data?.topologies || []).find((item: any) 
 const readOnly = computed(() => project.value?.status !== "DRAFT");
 const approvedAssets = computed(() => (store.data?.assets || []).filter((item: any) => item.status === "APPROVED"));
 const selectedObject = computed(() => draft.value?.objects?.[selectedIndex.value]);
-const dirty = computed(() => !!draft.value && JSON.stringify(draft.value) !== baseline.value);
+const sceneDirty = computed(() => !!draft.value && JSON.stringify(draft.value) !== baseline.value);
+const dirty = computed(() => sceneDirty.value || relationDirty.value);
 const role = computed(() => store.accounts.find((item: any) => item.id === store.actor)?.role || "");
 const canPublish = computed(() => ["ADMIN", "AUTHOR", "INSTRUCTOR"].includes(role.value));
 const shareTargets = computed(() => ["OPERATION", "MAINTENANCE", "SUPPORT"].filter((item) => item !== props.page.system));
@@ -47,9 +53,11 @@ function loadDraft() {
     environment: sourceScene.value.environment || { weather: "晴", light: "日间", camera: "总览", material: "标准" },
   });
   baseline.value = JSON.stringify(draft.value);
+  baseEditRevision.value = project.value.editRevision || 0;
   selectedIndex.value = Math.min(selectedIndex.value, Math.max(0, draft.value.objects.length - 1));
 }
 watch(() => [projectId.value, project.value?.editRevision], loadDraft, { immediate: true });
+watch(dirty, (value) => { store.unsavedContext = value ? `工程“${draft.value?.name || projectId.value}”` : ""; }, { immediate: true });
 
 async function save(message = "工程草稿已保存") {
   if (!project.value || !draft.value || readOnly.value) return null;
@@ -57,7 +65,7 @@ async function save(message = "工程草稿已保存") {
     "simulationProject.save",
     {
       id: project.value.id,
-      expectedEditRevision: project.value.editRevision,
+      expectedEditRevision: baseEditRevision.value,
       name: draft.value.name,
       purpose: draft.value.purpose,
       scene: { objects: draft.value.objects, environment: draft.value.environment },
@@ -67,6 +75,7 @@ async function save(message = "工程草稿已保存") {
   if (result) {
     draft.value = copy({ name: result.name, purpose: result.purpose || "", objects: result.scene.objects, environment: result.scene.environment });
     baseline.value = JSON.stringify(draft.value);
+    baseEditRevision.value = result.editRevision || baseEditRevision.value;
   }
   return result;
 }
@@ -77,7 +86,7 @@ function addObject() {
   let index = draft.value.objects.length + 1;
   let id = `OBJ-${String(index).padStart(2, "0")}`;
   while (used.has(id)) id = `OBJ-${String(++index).padStart(2, "0")}`;
-  draft.value.objects.push({ id, name: asset.name, assetRef: { id: asset.id, version: asset.version }, assetName: asset.name, x: 15 + (index * 13) % 70, y: 20 + (index * 17) % 60, view: "设备", initialState: { status: "READY" }, actions: asset.actions || [] });
+  draft.value.objects.push({ id, name: asset.name, assetRef: { id: asset.id, version: asset.version }, assetName: asset.name, x: 15 + (index * 13) % 70, y: 20 + (index * 17) % 60, view: "设备", initialState: copy(asset.initialState || { status: "READY" }), visual: copy(asset.visual || { symbolKey: "GENERIC" }), actions: asset.actions || [], stateFields: asset.stateFields || [], ports: asset.ports || [] });
   selectedIndex.value = draft.value.objects.length - 1;
   adding.value = false;
   assetId.value = "";
@@ -85,10 +94,19 @@ function addObject() {
 function removeObject(index: number) {
   const object = draft.value.objects[index];
   const topology = (store.data?.topologies || []).find((item: any) => item.id === project.value?.topologyRef?.id);
-  const referenced = (topology?.connections || []).some((item: any) => item.source?.objectId === object.id || item.target?.objectId === object.id);
-  if (referenced) return notify("该对象仍被设备关系引用，请先在“设备关系与联动”页签删除连接", "error");
+  const currentTopology = relationDraft.value || topology;
+  const referenced = (currentTopology?.connections || []).some((item: any) => item.source?.objectId === object.id || item.target?.objectId === object.id)
+    || (currentTopology?.rules || []).some((rule: any) => rule.trigger?.objectId === object.id || rule.conditions?.some((item: any) => item.objectId === object.id) || rule.effects?.some((item: any) => item.objectId === object.id));
+  if (referenced) return notify("该对象仍被连接、触发条件或规则效果引用，请先在“设备关系与联动”中解除全部引用", "error");
   draft.value.objects.splice(index, 1);
   selectedIndex.value = Math.max(0, Math.min(selectedIndex.value, draft.value.objects.length - 1));
+}
+function moveObject(payload: { id: string; x: number; y: number }) {
+  const object = draft.value.objects.find((item: any) => item.id === payload.id);
+  if (!object) return;
+  object.x = Math.round(payload.x * 10) / 10;
+  object.y = Math.round(payload.y * 10) / 10;
+  selectedIndex.value = draft.value.objects.indexOf(object);
 }
 async function cloneLegacy() {
   const result = await command("simulationProject.clone", { id: project.value.id, domain: props.page.system, name: `${project.value.name} · 可编辑副本` }, "已复制为独立草稿");
@@ -123,7 +141,7 @@ function beforeUnload(event: BeforeUnloadEvent) {
   event.returnValue = "";
 }
 window.addEventListener("beforeunload", beforeUnload);
-onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
+onBeforeUnmount(() => { window.removeEventListener("beforeunload", beforeUnload); if (store.unsavedContext.startsWith("工程")) store.unsavedContext = ""; });
 onBeforeRouteLeave((to) => {
   if (!dirty.value) return true;
   pendingRoute.value = to.fullPath;
@@ -132,12 +150,14 @@ onBeforeRouteLeave((to) => {
 });
 async function saveAndLeave() {
   if (!(await save("工程已保存"))) return;
+  if (relationDirty.value && !(await relationsEditor.value?.save?.())) return;
   leaveModal.value = false;
   await nextTick();
   router.push(pendingRoute.value);
 }
 async function discardAndLeave() {
   baseline.value = JSON.stringify(draft.value);
+  relationDirty.value = false;
   leaveModal.value = false;
   await nextTick();
   router.push(pendingRoute.value);
@@ -159,15 +179,15 @@ async function discardAndLeave() {
 
     <section v-if="tab === 'scene'" class="simulation-editor">
       <aside class="panel object-list"><div class="panel-header"><div><h3>场景对象</h3><small>{{ draft.objects.length }} 个独立实例</small></div><button v-if="!readOnly" class="icon-btn" title="添加对象" @click="adding = true"><Icon name="Plus" :size="18" /></button></div><button v-for="(object, index) in draft.objects" :key="object.id" :class="{ active: selectedIndex === Number(index) }" @click="selectedIndex = Number(index)"><Icon name="Box" :size="17" /><span><b>{{ object.name }}</b><small>{{ object.id }} · {{ object.assetName }}</small></span></button><div v-if="!draft.objects.length" class="object-empty">尚无对象，可从已批准素材添加。</div></aside>
-      <div class="panel scene-canvas"><div class="scene-toolbar"><span>场景平面 · 位置范围 0～100</span><span>{{ draft.environment.weather }} / {{ draft.environment.light }} / {{ draft.environment.camera }}</span></div><div class="scene-plane"><button v-for="(object, index) in draft.objects" :key="object.id" class="scene-object" :class="{ active: selectedIndex === Number(index) }" :style="{ left: `${object.x}%`, top: `${object.y}%` }" @click="selectedIndex = Number(index)"><Icon name="Box" :size="21" /><span>{{ object.name }}</span></button><div v-if="!draft.objects.length" class="canvas-empty">添加素材对象后在此形成工程专属场景</div></div></div>
-      <aside class="panel property-panel"><div class="panel-header"><h3>属性</h3></div><div v-if="selectedObject" class="panel-body property-fields"><label class="field"><span>对象编号</span><input v-model="selectedObject.id" :disabled="readOnly" /></label><label class="field"><span>对象名称</span><input v-model="selectedObject.name" :disabled="readOnly" /></label><div class="form-grid"><label class="field"><span>X</span><input v-model.number="selectedObject.x" type="number" min="0" max="100" :disabled="readOnly" /></label><label class="field"><span>Y</span><input v-model.number="selectedObject.y" type="number" min="0" max="100" :disabled="readOnly" /></label></div><label class="field"><span>视图标签</span><input v-model="selectedObject.view" :disabled="readOnly" /></label><label class="field"><span>初始状态</span><input v-model="selectedObject.initialState.status" :disabled="readOnly" /></label><button v-if="!readOnly" class="btn danger" @click="removeObject(selectedIndex)">移除对象</button></div><div v-else class="panel-body object-empty">选择一个对象查看属性。</div></aside>
+      <div class="panel scene-canvas"><EquipmentSceneView :context-id="project.id" :domain="page.system" :title="`${systemName(page.system)} · ${draft.name}`" :scene="{ objects: draft.objects, environment: draft.environment }" :topology="relationDraft || topology" :selected-object-id="selectedObject?.id" mode="edit" :read-only="readOnly" show-relations @select="selectedIndex = draft.objects.findIndex((item: any) => item.id === $event)" @move="moveObject" /></div>
+      <aside class="panel property-panel"><div class="panel-header"><h3>属性</h3></div><div v-if="selectedObject" class="panel-body property-fields"><label class="field"><span>对象编号</span><input v-model="selectedObject.id" :disabled="readOnly" /></label><label class="field"><span>对象名称</span><input v-model="selectedObject.name" :disabled="readOnly" /></label><div class="form-grid"><label class="field"><span>X</span><input v-model.number="selectedObject.x" type="number" min="0" max="100" :disabled="readOnly" /></label><label class="field"><span>Y</span><input v-model.number="selectedObject.y" type="number" min="0" max="100" :disabled="readOnly" /></label></div><label class="field"><span>视图标签</span><input v-model="selectedObject.view" :disabled="readOnly" /></label><div class="field"><span>类型化初始状态</span><div class="form-stack"><label v-for="field in selectedObject.stateFields || []" :key="field.id" class="field"><span>{{ field.id }} · {{ field.valueType }}</span><select v-if="field.valueType === 'BOOLEAN'" v-model="selectedObject.initialState[field.id]" :disabled="readOnly"><option :value="true">是</option><option :value="false">否</option></select><input v-else-if="field.valueType === 'NUMBER'" v-model.number="selectedObject.initialState[field.id]" type="number" :disabled="readOnly" /><input v-else v-model="selectedObject.initialState[field.id]" :disabled="readOnly" /></label></div></div><button v-if="!readOnly" class="btn danger" @click="removeObject(selectedIndex)">移除对象</button></div><div v-else class="panel-body object-empty">选择一个对象查看属性。</div></aside>
       <section class="panel environment-panel"><div class="panel-header"><h3>场景环境</h3></div><div class="panel-body form-grid"><label class="field"><span>天气</span><input v-model="draft.environment.weather" :disabled="readOnly" /></label><label class="field"><span>光照</span><input v-model="draft.environment.light" :disabled="readOnly" /></label><label class="field"><span>摄像机</span><input v-model="draft.environment.camera" :disabled="readOnly" /></label><label class="field"><span>材质方案</span><input v-model="draft.environment.material" :disabled="readOnly" /></label></div></section>
     </section>
-    <template v-else-if="tab === 'relations'">
-      <div v-if="dirty" class="info-note warning"><Icon name="CircleAlert" :size="17" />对象或编号存在未保存修改。请先保存“对象与场景”，设备关系只引用已持久化对象。</div>
-      <DeviceRelationsEditor :project="project" :scene="sourceScene" :topology="topology" :read-only="readOnly" />
-    </template>
-    <SimulationPreviewPanel v-else :project="project" :scene="sourceScene" />
+    <div v-show="tab === 'relations'">
+      <div v-if="sceneDirty" class="info-note warning"><Icon name="CircleAlert" :size="17" />对象或编号存在未保存修改。请先保存“对象与场景”，设备关系只引用已持久化对象。</div>
+      <DeviceRelationsEditor ref="relationsEditor" :project="project" :scene="sourceScene" :topology="topology" :read-only="readOnly" @update:dirty="relationDirty = $event" @update:draft="relationDraft = $event" />
+    </div>
+    <div v-show="tab === 'preview'"><div v-if="dirty" class="info-note warning"><Icon name="CircleAlert" :size="17" />调试实例只使用已保存版本。请先保存当前对象、环境和联动草稿。</div><SimulationPreviewPanel :project="project" :scene="sourceScene" /></div>
 
     <Modal v-if="adding" title="从已批准素材添加对象" @close="adding = false"><label class="field"><span>素材版本</span><select v-model="assetId"><option value="">请选择素材</option><option v-for="asset in approvedAssets" :key="asset.id" :value="asset.id">{{ asset.name }} · V{{ asset.version }} · {{ systemName(asset.ownerSystem) }}</option></select></label><div v-if="!approvedAssets.length" class="info-note warning">当前系统没有可引用的已批准素材，请先到素材库导入、审核或授权共享。</div><template #footer><button class="btn secondary" @click="adding = false">取消</button><button class="btn primary" :disabled="!assetId" @click="addObject">添加对象</button></template></Modal>
     <Modal v-if="leaveModal" title="存在未保存修改" @close="leaveModal = false"><p>离开后，本地尚未保存的对象和环境修改将丢失。</p><template #footer><button class="btn secondary" @click="leaveModal = false">取消</button><button class="btn danger" @click="discardAndLeave">放弃并离开</button><button class="btn primary" @click="saveAndLeave">保存后离开</button></template></Modal>

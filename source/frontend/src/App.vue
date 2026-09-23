@@ -105,12 +105,27 @@ function go(id: string) {
   searchOpen.value = false;
 }
 async function changeActor(e: Event) {
+  const select = e.target as HTMLSelectElement;
+  if (store.unsavedContext && !confirm(`${store.unsavedContext}存在未保存修改。切换身份将放弃这些本地修改，是否继续？`)) {
+    select.value = store.actor;
+    return;
+  }
   try {
-    await login((e.target as HTMLSelectElement).value);
+    store.unsavedContext = "";
+    await login(select.value);
     notify("已切换演示身份");
   } catch (e: any) {
     notify(e.message, "error");
   }
+}
+async function changeWorkspace(e: Event) {
+  const select = e.target as HTMLSelectElement;
+  if (store.unsavedContext && !confirm(`${store.unsavedContext}存在未保存修改。切换工作区将放弃这些本地修改，是否继续？`)) {
+    select.value = store.workspace;
+    return;
+  }
+  store.unsavedContext = "";
+  await switchWorkspace(select.value);
 }
 onMounted(async () => {
   await bootstrap();
@@ -269,9 +284,7 @@ onUnmounted(() => clearInterval(interval));
               class="workspace-select"
               aria-label="工作区"
               :value="store.workspace"
-              @change="
-                switchWorkspace(($event.target as HTMLSelectElement).value)
-              "
+              @change="changeWorkspace"
             >
               <option v-for="w in store.workspaces" :key="w.id" :value="w.id">
                 {{ w.name }}

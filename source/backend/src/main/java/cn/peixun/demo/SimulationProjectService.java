@@ -166,7 +166,7 @@ public final class SimulationProjectService {
               "initialState",
               raw.path("initialState").isObject()
                   ? raw.path("initialState").deepCopy()
-                  : obj("status", "READY"),
+                  : asset.path("initialState").deepCopy(),
               "actions",
               asset.path("actions").deepCopy());
       SimulationCapabilities.enrichObject(clean, asset);

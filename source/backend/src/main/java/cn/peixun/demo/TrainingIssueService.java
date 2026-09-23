@@ -70,13 +70,10 @@ public final class TrainingIssueService {
     String type = issue.path("type").asText();
     if (type.equals("CONTENT")) {
       require(DemoService.role(actor).matches("INSTRUCTOR|ADMIN"), "只有教员可以发起课件修订");
-      ObjectNode revision =
-          CoursewareService.apply(
-              state,
-              "courseware.revise",
-              obj("id", issue.path("sourceCourseRef").path("id").asText()),
-              actor,
-              issue.path("domain").asText());
+      ObjectNode source = find(state, "courses", issue.path("sourceCourseRef").path("id").asText());
+      ObjectNode revision = source.path("interactionSchemaVersion").asInt() == 3
+          ? CoursewareService.apply(state, "courseware.revise", obj("id", source.path("id").asText()), actor, issue.path("domain").asText())
+          : TrainingModule.apply(state, "course.revise", obj("id", source.path("id").asText()), actor);
       issue.put("resolutionType", "COURSEWARE_REVISION").put("resolutionId", revision.path("id").asText()).put("status", "IN_PROGRESS");
       find(state, "courses", revision.path("id").asText()).put("sourceIssueId", issue.path("id").asText());
       history(issue, "IN_PROGRESS", actor, "已创建课件修订草稿");
@@ -124,6 +121,13 @@ public final class TrainingIssueService {
             "scope", scope,
             "type", taskType,
             "dueMinutes", dueMinutes,
+            "equipmentId", payload.path("equipmentId").asText(object),
+            "equipmentType", payload.path("equipmentType").asText("TRAINING_DISCOVERY"),
+            "taskType", taskType,
+            "deadline", dueMinutes,
+            "description", scope,
+            "importance", payload.path("importance").asInt(80),
+            "wbs", arr(),
             "constraints", payload.path("constraints").asText(),
             "status", "DRAFT",
             "sourceIssueId", issue.path("id").asText(),

@@ -70,6 +70,7 @@ public final class TrainingRuntimeService {
     if (!stationId.isBlank()) {
       ObjectNode station = find(state, "stations", stationId);
       require(station.path("domain").asText().equals(course.path("domain").asText()), "台位不属于当前业务系统");
+      requireStationCompatible(station, snapshot);
     }
     ObjectNode assignment =
         obj(
@@ -95,8 +96,7 @@ public final class TrainingRuntimeService {
     ObjectNode assignment = find(state, "assignments", payload.path("assignmentId").asText());
     require(
         actor.equals(assignment.path("learnerId").asText())
-            || actor.equals("ADMIN")
-            || actor.equals("INSTRUCTOR"),
+            || DemoService.role(actor).matches("ADMIN|INSTRUCTOR"),
         "当前学员未被分配此任务");
     for (JsonNode item : state.withArray("attempts"))
       require(
@@ -107,6 +107,11 @@ public final class TrainingRuntimeService {
     require(mode.matches("GUIDED|FREE|DEMONSTRATION"), "训练模式不正确");
     String scope = mode.equals("DEMONSTRATION") ? "NONE" : payload.path("scope").asText("INDIVIDUAL");
     require(scope.matches("NONE|INDIVIDUAL"), "V3课件首版仅支持个人训练或不计分演示");
+    String stationId = assignment.path("stationId").asText();
+    if (!stationId.isBlank()) {
+      ObjectNode station = find(state, "stations", stationId);
+      require(station.path("status").asText().equals("CONNECTED"), "指定训练台位尚未连接");
+    }
     ObjectNode snapshot = (ObjectNode) assignment.path("courseSnapshot").deepCopy();
     ObjectNode project =
         obj(
@@ -152,7 +157,6 @@ public final class TrainingRuntimeService {
       SupportTrainingService.initialize(attempt, (ObjectNode) snapshot.path("supportCaseSnapshot"));
     state.withArray("attempts").add(attempt);
     assignment.put("status", "RUNNING").put("latestAttemptId", attemptId).put("confirmed", false);
-    assignment.remove("evidenceAttemptId");
     return attempt;
   }
 
@@ -289,7 +293,14 @@ public final class TrainingRuntimeService {
     ObjectNode attempt = find(state, "attempts", payload.path("id").asText());
     require(attempt.path("status").asText().equals("COMPLETED") && attempt.path("scope").asText().equals("INDIVIDUAL"), "需要已完成的个人训练记录");
     ObjectNode assignment = find(state, "assignments", attempt.path("assignmentId").asText());
+    for (JsonNode item : state.withArray("trainingArchives"))
+      if (item.path("attemptId").asText().equals(attempt.path("id").asText())) {
+        assignment.put("archiveId", item.path("id").asText());
+        return assignment;
+      }
     assignment.put("confirmed", true).put("evidenceAttemptId", attempt.path("id").asText());
+    if (!assignment.has("confirmedAttemptIds")) assignment.set("confirmedAttemptIds", arr());
+    assignment.withArray("confirmedAttemptIds").add(attempt.path("id").asText());
     attempt.with("evaluation").put("confirmedBy", actor).put("confirmedAt", Instant.now().toString());
     ObjectNode archive =
         obj(
@@ -301,6 +312,8 @@ public final class TrainingRuntimeService {
             "attemptId", attempt.path("id").asText(),
             "scoreRule", attempt.path("courseSnapshot").path("scoreRule").deepCopy(),
             "score", attempt.get("score"),
+            "courseSnapshot", attempt.path("courseSnapshot").deepCopy(),
+            "finalStates", attempt.path("runtime").path("states").deepCopy(),
             "events", attempt.path("events").deepCopy(),
             "evaluation", attempt.path("evaluation").deepCopy(),
             "archivedAt", Instant.now().toString());
@@ -314,6 +327,13 @@ public final class TrainingRuntimeService {
     TrainingDomain.require(stationDomain);
     require(domain.isBlank() || domain.equals(stationDomain), "当前系统不能配置其他系统台位");
     require(payload.path("mappings").isArray() && !payload.path("mappings").isEmpty(), "至少配置一个台位信号映射");
+    java.util.Set<String> points = new java.util.HashSet<>();
+    for (JsonNode mapping : payload.path("mappings")) {
+      require(!mapping.path("point").asText().isBlank(), "台位信号点不能为空");
+      require(points.add(mapping.path("point").asText()), "台位信号点不能重复");
+      require(!mapping.path("objectId").asText().isBlank() && !mapping.path("actionId").asText().isBlank(), "台位映射必须选择对象和动作");
+      require(mapping.path("parameters").isObject(), "台位映射参数必须是类型化对象");
+    }
     ObjectNode station =
         obj(
             "id", id("STATION"),
@@ -341,6 +361,11 @@ public final class TrainingRuntimeService {
     ObjectNode attempt = find(state, "attempts", payload.path("attemptId").asText());
     require(attempt.path("interactionSchemaVersion").asInt() == 3, "台位信号只能发送到V3训练实例");
     require(station.path("domain").asText().equals(attempt.path("domain").asText()), "台位与训练任务不属于同一系统");
+    require(attempt.path("status").asText().equals("RUNNING"), attempt.path("status").asText().equals("PAUSED") ? "训练已暂停，请继续训练后再发送台位信号" : "训练已经结束，不能继续发送台位信号");
+    require(!attempt.path("awaitingContinue").asBoolean(), "本步已通过，请先进入下一步");
+    requireCanOperate(attempt, actor);
+    ObjectNode assignment = find(state, "assignments", attempt.path("assignmentId").asText());
+    require(assignment.path("stationId").asText().isBlank() || assignment.path("stationId").asText().equals(station.path("id").asText()), "该训练任务指定了其他台位");
     String point = payload.path("point").asText();
     ObjectNode mapping = null;
     for (JsonNode item : station.withArray("mappings"))
@@ -461,11 +486,25 @@ public final class TrainingRuntimeService {
     return payload.path("parameters").isObject() ? (ObjectNode) payload.path("parameters") : obj();
   }
 
+  private static void requireStationCompatible(ObjectNode station, ObjectNode snapshot) {
+    JsonNode objects = snapshot.path("sceneSnapshot").path("objects");
+    require(objects.isArray(), "课件环境缺少可供台位映射的对象");
+    for (JsonNode mapping : station.withArray("mappings")) {
+      JsonNode target = null;
+      for (JsonNode object : objects)
+        if (object.path("id").asText().equals(mapping.path("objectId").asText())) target = object;
+      require(target != null, "台位映射对象不在课件环境中：" + mapping.path("objectId").asText());
+      boolean actionFound = false;
+      for (JsonNode action : target.path("actions"))
+        if (action.path("id").asText().equals(mapping.path("actionId").asText())) actionFound = true;
+      require(actionFound, "台位映射动作不受课件对象支持：" + mapping.path("actionId").asText());
+    }
+  }
+
   private static void requireCanOperate(ObjectNode attempt, String actor) {
     require(
         actor.equals(attempt.path("learnerId").asText())
-            || actor.equals("ADMIN")
-            || actor.equals("INSTRUCTOR"),
+            || DemoService.role(actor).matches("ADMIN|INSTRUCTOR"),
         "该训练不属于当前学员");
   }
 

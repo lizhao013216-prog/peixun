@@ -33,6 +33,12 @@ public final class TrainingModule {
                 p.path("format").asText("FBX"),
                 "componentId",
                 p.path("componentId").asText("GENERIC"),
+                "capabilityTemplate",
+                p.path("capabilityTemplate").asText("GENERIC"),
+                "visual",
+                obj("symbolKey", p.path("symbolKey").asText(p.path("capabilityTemplate").asText("GENERIC")), "width", 120, "height", 86, "labelPosition", "BOTTOM"),
+                "initialState",
+                p.path("initialState").isObject() ? p.path("initialState").deepCopy() : obj("status", "READY"),
                 "status",
                 "DRAFT",
                 "version",
@@ -62,6 +68,18 @@ public final class TrainingModule {
         SimulationCapabilities.enrichAsset(a);
         if (p.has("blobRef")) a.set("blobRef", p.get("blobRef"));
         s.withArray("assets").add(a);
+        return a;
+      }
+      case "asset.configure" -> {
+        ObjectNode a = find(s, "assets", target);
+        require(a.path("status").asText().matches("DRAFT|PENDING_REVIEW"), "只有未审核素材可以修改模拟能力");
+        String template = p.path("capabilityTemplate").asText();
+        require(template.matches("GENERIC|PUMP|VALVE|SENSOR|CONTROL|TOOL|WORKBENCH"), "模拟能力模板不正确");
+        a.put("capabilityTemplate", template);
+        a.set("visual", obj("symbolKey", p.path("symbolKey").asText(template), "width", p.path("width").asInt(120), "height", p.path("height").asInt(86), "labelPosition", "BOTTOM"));
+        if (p.path("initialState").isObject()) a.set("initialState", p.path("initialState").deepCopy());
+        SimulationCapabilities.enrichAsset(a);
+        a.put("editRevision", a.path("editRevision").asInt(1) + 1);
         return a;
       }
       case "asset.process" -> {

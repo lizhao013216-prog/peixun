@@ -9,6 +9,7 @@ import Icon from "../components/Icon.vue";
 import Badge from "../components/Badge.vue";
 import Empty from "../components/Empty.vue";
 import SimulationPreviewPanel from "../components/SimulationPreviewPanel.vue";
+import EquipmentSceneView from "../components/EquipmentSceneView.vue";
 
 const props = defineProps<{ page: PageMeta }>();
 const router = useRouter();
@@ -67,6 +68,7 @@ function ruleText(rule: any) {
         <article><span>所属系统</span><b>{{ systemName(selected.domain) }}</b></article><article><span>来源工程</span><b>{{ selected.sourceRef?.id }}</b><small>R{{ selected.sourceRef?.editRevision }}</small></article><article><span>发布信息</span><b>{{ selected.publishedBy }}</b><small>{{ selected.publishedAt }}</small></article><article><span>联动模式</span><b>{{ selected.linkageMode === 'SIGNAL_GRAPH' ? '信号图联动' : '不使用设备联动' }}</b><small>{{ selected.connectionCount }} 条连接 · {{ selected.ruleCount }} 条规则</small></article>
       </div>
       <div class="button-row template-actions"><button v-if="canManage" class="btn primary" @click="instantiate('COPY')"><Icon name="Copy" :size="15" />从模板新建工程</button><button v-if="canManage && selected.domain === page.system" class="btn secondary" @click="instantiate('REVISION')"><Icon name="GitBranch" :size="15" />创建修订</button><button v-if="canManage" class="btn secondary" @click="debugging = !debugging"><Icon name="Play" :size="15" />{{ debugging ? '收起调试' : '调试已发布版本' }}</button></div>
+      <EquipmentSceneView :context-id="selected.id" :domain="selected.domain" :title="`${systemName(selected.domain)} · ${selected.name}`" :scene="selected.sceneSnapshot" :topology="selected.topologySnapshot" mode="preview" show-relations />
       <div class="template-columns">
         <section><h4>设备组成与主要动作</h4><div class="relation-list"><div v-for="item in selected.sceneSnapshot?.objects || []" :key="item.id" class="relation-row"><b>{{ item.name }}</b><span>{{ item.id }}</span><small>{{ item.assetName }} · {{ item.assetRef?.id }}@V{{ item.assetRef?.version }}<br />动作：{{ item.actions?.map((action: any) => action.label).join('、') || '无' }}</small></div></div></section>
         <section><h4>素材依赖</h4><div class="relation-list"><div v-for="item in selected.dependencies || []" :key="`${item.assetRef?.id}-${item.assetRef?.version}`" class="relation-row"><b>{{ item.name }}</b><span>{{ item.category }}</span><small>{{ item.assetRef?.id }}@V{{ item.assetRef?.version }}</small></div></div></section>

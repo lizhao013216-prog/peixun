@@ -105,9 +105,8 @@ class SimulationProjectServiceTest {
     assertEquals("EDIT_CONFLICT", conflict.code);
     ObjectNode learner = WorkspaceProjection.forActor(state, "LEARNER_A", "OPERATION");
     assertEquals(0, learner.withArray("simulationProjects").size());
-    assertTrue(
-        learner.withArray("assets").findValuesAsText("status").stream()
-            .allMatch("APPROVED"::equals));
+    for (JsonNode item : learner.withArray("assets"))
+      assertEquals("APPROVED", item.path("status").asText());
   }
 
   private static ObjectNode create(ObjectNode state, String domain, String name) {

@@ -73,6 +73,29 @@ class SupportTrainingAndIssueServiceTest {
     assertEquals(equipment.path("id").asText(), task.path("sourceIssueId").asText());
     assertEquals(attempt.path("id").asText(), task.path("sourceAttemptId").asText());
     assertEquals("BUSINESS", task.path("purpose").asText());
+    assertEquals(360, task.path("deadline").asInt());
+    assertEquals("RESOURCE_CHECK", task.path("taskType").asText());
+    ObjectNode plan = PlanningModule.apply(f.state, "plan.create", obj("taskId", task.path("id").asText()), "PLANNER");
+    assertEquals(360, plan.path("deadline").asInt());
+    assertThrows(BusinessException.class, () -> PlanningModule.apply(f.state, "task.create", obj("name", "绕过任务", "sourceIssueId", content.path("id").asText()), "PLANNER"));
+  }
+
+  @Test
+  void editingCalculatedPlanInvalidatesResultsScoreAndRequiresRecalculation() {
+    Fixture f = fixture();
+    ObjectNode attempt = start(f.state, f.course, "LEARNER_A", "STALE");
+    support(f.state, attempt, "training.support.confirm", obj(), "LEARNER_A", "S1");
+    support(f.state, attempt, "training.support.resource", obj("resourceId", "E1", "capacity", 1), "LEARNER_A", "S2");
+    support(f.state, attempt, "training.support.plan", obj("operationId", "T01", "duration", 30), "LEARNER_A", "S3");
+    support(f.state, attempt, "training.support.calculate", obj(), "LEARNER_A", "S4");
+    support(f.state, attempt, "training.support.delay", obj("arrivalTime", 180), "LEARNER_A", "S5");
+    support(f.state, attempt, "training.support.resolve", obj("strategy", "EXPEDITE", "arrivalTime", 135, "transportCost", 140), "LEARNER_A", "S6");
+    int revision = attempt.path("supportTraining").path("planRevision").asInt();
+    support(f.state, attempt, "training.support.plan", obj("operationId", "T01", "duration", 120), "LEARNER_A", "S7");
+    assertTrue(attempt.path("supportTraining").path("planRevision").asInt() > revision);
+    assertTrue(attempt.path("supportTraining").path("resolvedResult").isMissingNode());
+    assertFalse(attempt.path("supportTraining").path("checkpoints").path("resolve").asBoolean());
+    assertThrows(BusinessException.class, () -> support(f.state, attempt, "training.support.submit", obj("reflection", "不能提交过期结果"), "LEARNER_A", "S8"));
   }
 
   @Test

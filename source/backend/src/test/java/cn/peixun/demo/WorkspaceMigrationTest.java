@@ -40,7 +40,7 @@ class WorkspaceMigrationTest {
 
     ObjectNode migrated = WorkspaceMigration.migrate(legacy);
     assertFalse(legacy.has("schemaVersion"), "迁移不得修改输入夹具");
-    assertEquals(7, migrated.path("schemaVersion").asInt());
+    assertEquals(8, migrated.path("schemaVersion").asInt());
     assertEquals("OPERATION", migrated.withArray("assignments").get(0).path("domain").asText());
     assertEquals("OPERATION", migrated.withArray("attempts").get(0).path("domain").asText());
     assertEquals("SUPPORT", migrated.withArray("tasks").get(0).path("domain").asText());
@@ -98,11 +98,13 @@ class WorkspaceMigrationTest {
 
     ObjectNode migrated = WorkspaceMigration.migrate(v2);
     ObjectNode repeated = WorkspaceMigration.migrate(migrated);
-    assertEquals(7, migrated.path("schemaVersion").asInt());
+    assertEquals(8, migrated.path("schemaVersion").asInt());
     assertEquals(courses, migrated.path("courses"));
     assertEquals(assignments, migrated.path("assignments"));
     assertEquals(attempts, migrated.path("attempts"));
-    assertEquals(tasks, migrated.path("tasks"));
+    assertEquals(tasks.get(0).path("id"), migrated.path("tasks").get(0).path("id"));
+    assertEquals(tasks.get(0).path("status"), migrated.path("tasks").get(0).path("status"));
+    assertTrue(migrated.path("tasks").get(0).path("migrationReviewRequired").asBoolean());
     assertEquals(plans, migrated.path("plans"));
     assertEquals(planTemplates, migrated.path("templates"));
     assertEquals(2, migrated.withArray("simulationProjects").size());

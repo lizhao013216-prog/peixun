@@ -4,9 +4,11 @@ import { command } from "../store";
 import Icon from "./Icon.vue";
 
 const props = defineProps<{ project: any; scene: any; topology: any; readOnly: boolean }>();
+const emit = defineEmits<{ "update:dirty": [value: boolean]; "update:draft": [value: any] }>();
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const draft = ref({ connections: [] as any[], rules: [] as any[] });
 const baseline = ref("");
+const baseEditRevision = ref(0);
 const connectionForm = ref({ sourceObject: "", sourcePort: "", targetObject: "", targetPort: "" });
 const dirty = computed(() => JSON.stringify(draft.value) !== baseline.value);
 const objects = computed(() => props.scene?.objects || []);
@@ -23,13 +25,35 @@ const fieldLabel = (field: string) => fieldLabels[field] || field;
 const operatorLabels: Record<string, string> = { EQ: "等于", NE: "不等于", LT: "小于", LTE: "小于等于", GT: "大于", GTE: "大于等于" };
 const operatorLabel = (operator: string) =>
   operatorLabels[operator] || operator;
+const actions = (objectId: string) => object(objectId)?.actions || [];
+const stateFields = (objectId: string) => object(objectId)?.stateFields || [];
+const fieldValueType = (objectId: string, fieldId: string) =>
+  stateFields(objectId).find((item: any) => item.id === fieldId)?.valueType || "STRING";
+function addRule() {
+  const triggerObject = objects.value.find((item: any) => item.actions?.length);
+  const stateObject = objects.value.find((item: any) => item.stateFields?.length) || triggerObject;
+  if (!triggerObject || !stateObject) return;
+  const field = stateObject.stateFields?.[0];
+  draft.value.rules.push({ id: nextId("RULE", draft.value.rules), kind: "CONDITIONAL", trigger: { objectId: triggerObject.id, actionId: triggerObject.actions[0].id }, conditions: [{ objectId: stateObject.id, field: field?.id || "status", operator: "EQ", value: "READY" }], effects: [{ objectId: stateObject.id, field: field?.id || "status", value: "READY" }], rejectMessage: "条件不满足，动作未执行" });
+}
+function addCondition(rule: any) {
+  const target = objects.value.find((item: any) => item.stateFields?.length);
+  if (target) rule.conditions.push({ objectId: target.id, field: target.stateFields[0].id, operator: "EQ", value: "READY" });
+}
+function addEffect(rule: any) {
+  const target = objects.value.find((item: any) => item.stateFields?.length);
+  if (target) rule.effects.push({ objectId: target.id, field: target.stateFields[0].id, value: "READY" });
+}
 
 function load() {
   if (baseline.value && dirty.value) return;
   draft.value = copy({ connections: props.topology?.connections || [], rules: props.topology?.rules || [] });
   baseline.value = JSON.stringify(draft.value);
+  baseEditRevision.value = props.topology?.editRevision || 0;
 }
 watch(() => props.topology?.editRevision, load, { immediate: true });
+watch(draft, (value) => emit("update:draft", copy(value)), { deep: true, immediate: true });
+watch(dirty, (value) => emit("update:dirty", value), { immediate: true });
 
 function addConnection() {
   const source = port(connectionForm.value.sourceObject, connectionForm.value.sourcePort);
@@ -59,12 +83,15 @@ function addGuidedRules() {
     draft.value.rules.push({ id: "RULE-LOW-VALUE", kind: "CONDITIONAL", trigger: { objectId: sensor.id, actionId: "SET_VALUE" }, conditions: [{ objectId: pump.id, field: "sensorInput", operator: "LT", value: 0.4 }], effects: [{ objectId: pump.id, field: "status", value: "ALARM" }], rejectMessage: "" });
 }
 async function save() {
-  const result = await command("simulationTopology.save", { projectId: props.project.id, expectedEditRevision: props.topology.editRevision, connections: draft.value.connections, rules: draft.value.rules }, "设备关系与规则已保存");
+  const result = await command("simulationTopology.save", { projectId: props.project.id, expectedEditRevision: baseEditRevision.value, connections: draft.value.connections, rules: draft.value.rules }, "设备关系与规则已保存");
   if (result) {
     draft.value = copy({ connections: result.connections, rules: result.rules });
     baseline.value = JSON.stringify(draft.value);
+    baseEditRevision.value = result.editRevision || baseEditRevision.value;
   }
+  return result;
 }
+defineExpose({ save });
 function nextId(prefix: string, items: any[]) {
   let index = items.length + 1;
   let id = `${prefix}-${String(index).padStart(2, "0")}`;
@@ -97,13 +124,16 @@ const hasGuidedObjects = computed(() =>
     </section>
 
     <section class="panel relation-main">
-      <div class="panel-header"><div><h3>动作规则</h3><small>规则用中文解释条件与状态变化，不执行脚本</small></div><button v-if="!readOnly && hasGuidedObjects" class="btn secondary" @click="addGuidedRules">生成泵组联动示例</button></div>
+      <div class="panel-header"><div><h3>动作规则</h3><small>规则用中文解释条件与状态变化，不执行脚本</small></div><div class="button-row"><button v-if="!readOnly" class="btn secondary" @click="addRule"><Icon name="Plus" :size="15" />新增通用规则</button><button v-if="!readOnly && hasGuidedObjects" class="btn secondary" @click="addGuidedRules">生成泵组联动示例</button></div></div>
       <div class="panel-body rule-list">
         <article v-for="(rule, index) in draft.rules" :key="rule.id" class="rule-card">
           <div class="rule-card-head"><div><span class="pill">{{ rule.kind === 'PRECONDITION' ? '动作前置条件' : '条件命中效果' }}</span><b>{{ rule.id }}</b></div><button v-if="!readOnly" class="icon-btn" title="删除规则" @click="draft.rules.splice(Number(index), 1)"><Icon name="Trash2" :size="15" /></button></div>
+          <div class="form-grid"><label class="field"><span>规则类型</span><select v-model="rule.kind" :disabled="readOnly"><option value="PRECONDITION">动作前置条件</option><option value="CONDITIONAL">条件命中效果</option></select></label><label class="field"><span>触发对象</span><select v-model="rule.trigger.objectId" :disabled="readOnly" @change="rule.trigger.actionId = actions(rule.trigger.objectId)[0]?.id || ''"><option v-for="item in objects.filter((value: any) => value.actions?.length)" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label class="field"><span>触发动作</span><select v-model="rule.trigger.actionId" :disabled="readOnly"><option v-for="action in actions(rule.trigger.objectId)" :key="action.id" :value="action.id">{{ action.label || action.id }}</option></select></label></div>
           <p>当 <b>{{ objectName(rule.trigger.objectId) }}</b> 执行“<b>{{ actionLabel(rule.trigger.objectId, rule.trigger.actionId) }}</b>”时，{{ rule.kind === 'PRECONDITION' ? '必须满足' : '若满足' }}：</p>
-          <div v-for="condition in rule.conditions" :key="`${condition.objectId}.${condition.field}`" class="rule-sentence"><span>{{ objectName(condition.objectId) }}的{{ fieldLabel(condition.field) }}</span><span>{{ operatorLabel(condition.operator) }}</span><input v-if="typeof condition.value === 'number'" v-model.number="condition.value" type="number" step="0.1" :disabled="readOnly" /><select v-else-if="typeof condition.value === 'boolean'" v-model="condition.value" :disabled="readOnly"><option :value="true">是</option><option :value="false">否</option></select><input v-else v-model="condition.value" :disabled="readOnly" /></div>
-          <p v-for="effect in rule.effects" :key="`${effect.objectId}.${effect.field}`" class="rule-effect">满足后：{{ objectName(effect.objectId) }}的{{ fieldLabel(effect.field) }}变为 <b>{{ effect.value }}</b></p>
+          <div v-for="(condition, conditionIndex) in rule.conditions" :key="`${condition.objectId}.${condition.field}.${conditionIndex}`" class="rule-sentence"><select v-model="condition.objectId" :disabled="readOnly" @change="condition.field = stateFields(condition.objectId)[0]?.id || ''"><option v-for="item in objects.filter((value: any) => value.stateFields?.length)" :key="item.id" :value="item.id">{{ item.name }}</option></select><select v-model="condition.field" :disabled="readOnly"><option v-for="field in stateFields(condition.objectId)" :key="field.id" :value="field.id">{{ fieldLabel(field.id) }}</option></select><select v-model="condition.operator" :disabled="readOnly"><option v-for="(label, key) in operatorLabels" :key="key" :value="key">{{ label }}</option></select><input v-model.number="condition.value" :type="fieldValueType(condition.objectId, condition.field) === 'NUMBER' ? 'number' : 'text'" :disabled="readOnly" /><button v-if="!readOnly" class="icon-btn" title="删除条件" @click="rule.conditions.splice(Number(conditionIndex), 1)"><Icon name="Trash2" :size="14" /></button></div>
+          <button v-if="!readOnly" class="btn secondary small" @click="addCondition(rule)">增加条件</button>
+          <div v-for="(effect, effectIndex) in rule.effects" :key="`${effect.objectId}.${effect.field}.${effectIndex}`" class="rule-sentence rule-effect"><span>满足后</span><select v-model="effect.objectId" :disabled="readOnly" @change="effect.field = stateFields(effect.objectId)[0]?.id || ''"><option v-for="item in objects.filter((value: any) => value.stateFields?.length)" :key="item.id" :value="item.id">{{ item.name }}</option></select><select v-model="effect.field" :disabled="readOnly"><option v-for="field in stateFields(effect.objectId)" :key="field.id" :value="field.id">{{ fieldLabel(field.id) }}</option></select><input v-model="effect.value" :disabled="readOnly" /><button v-if="!readOnly" class="icon-btn" title="删除效果" @click="rule.effects.splice(Number(effectIndex), 1)"><Icon name="Trash2" :size="14" /></button></div>
+          <button v-if="!readOnly" class="btn secondary small" @click="addEffect(rule)">增加效果</button>
           <p v-if="rule.kind === 'PRECONDITION'" class="rule-reject">拒绝说明：<input v-model="rule.rejectMessage" :disabled="readOnly" /></p>
         </article>
         <div v-if="!draft.rules.length" class="object-empty">尚未配置规则。添加具备泵组、阀门和传感器能力的对象后，可生成数据驱动示例。</div>

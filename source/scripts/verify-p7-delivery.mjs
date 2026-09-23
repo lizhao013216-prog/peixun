@@ -40,6 +40,11 @@ for (const relative of sourceFiles)
     hash(path.join(releaseDist, relative)),
     `根目录前端文件不是同次构建：${relative}`,
   );
+const buildTime = Math.max(
+  fs.statSync(sourceJar).mtimeMs,
+  ...sourceFiles.map((relative) => fs.statSync(path.join(sourceDist, relative)).mtimeMs),
+);
+const buildId = hash(sourceJar);
 
 const evidence = [
   "test-results/browser-verification.md",
@@ -51,11 +56,17 @@ const evidence = [
   "docs/assets/p5-support-training-completed.png",
   "docs/assets/p6-training-issue-closure.png",
 ];
-for (const relative of evidence)
+const evidenceLines = [];
+for (const relative of evidence) {
+  const evidenceFile = path.join(sourceRoot, relative);
   assert.ok(
-    fs.existsSync(path.join(sourceRoot, relative)),
+    fs.existsSync(evidenceFile),
     `缺少 P7 阶段证据：${relative}`,
   );
+  const modified = fs.statSync(evidenceFile).mtimeMs;
+  assert.ok(modified >= buildTime, `证据早于本次构建，必须重新执行对应验收：${relative}`);
+  evidenceLines.push(`- ${relative}：${new Date(modified).toISOString()}`);
+}
 
 const reports = path.join(sourceRoot, "backend", "target", "surefire-reports");
 const xmlReports = fs
@@ -71,7 +82,7 @@ for (const report of xmlReports) {
   assert.match(report, /\bfailures="0"/);
   assert.match(report, /\berrors="0"/);
 }
-assert.ok(tests >= 48, `Maven 测试数量不足：${tests}`);
+assert.ok(tests >= 52, `Maven 测试数量不足：${tests}`);
 
 for (const workflow of [".github/workflows/ci.yml", "repository-config/ci.yml"]) {
   const content = fs.readFileSync(path.join(repositoryRoot, workflow), "utf8");
@@ -88,7 +99,7 @@ assert.match(implementation, /P7 全链路回归与可运行交付 \| 已完成/
 for (const id of ["P7-01", "P7-02", "P7-03", "P7-04", "P7-05", "P7-06"])
   assert.match(acceptance, new RegExp(`\\| ${id} \\| 通过 \\|`));
 
-const report = `# P7 可运行交付校验\n\n- Maven 测试：${tests} 项，0 失败。\n- 根目录 JAR 与源码构建 SHA-256 一致：${hash(sourceJar)}。\n- 根目录前端与源码构建逐文件一致：${sourceFiles.length} 个文件。\n- 1440px、1366×768、390px 浏览器证据齐全。\n- P2—P6 阶段关键页面证据齐全。\n- 两份 CI 配置已纳入 P5/P6 与 P7 校验。\n- start.bat 仍指向根目录发布 JAR。\n`;
+const report = `# P7 可运行交付校验\n\n- 校验生成时间：${new Date().toISOString()}。\n- 本次构建标识（JAR SHA-256）：${buildId}。\n- Maven 测试：${tests} 项，0 失败。\n- 根目录 JAR 与源码构建 SHA-256 一致。\n- 根目录前端与源码构建逐文件一致：${sourceFiles.length} 个文件。\n- 1440px、1366×768、390px 浏览器证据齐全。\n- P2—P6 阶段关键页面证据均晚于本次构建。\n- 两份 CI 配置已纳入 P5/P6 与 P7 校验。\n- start.bat 仍指向根目录发布 JAR。\n\n## 本次构建证据时间\n\n${evidenceLines.join("\n")}\n`;
 fs.writeFileSync(path.join(output, "p7-delivery-verification.md"), report);
 console.log(
   `PASS: P7 delivery parity, ${tests} Maven tests, ${sourceFiles.length} frontend files, CI coverage, evidence and start.bat linkage.`,

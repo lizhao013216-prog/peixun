@@ -32,8 +32,15 @@ export const store = reactive({
   selectedExecution: "",
   selectedArchive: "",
   guide: false,
+  unsavedContext: "",
 });
 let toastTimer: any;
+let contextSequence = 0;
+let loginSequence = 0;
+const contextKey = () => `${store.workspace}|${store.scopeDomain}|${store.actor}`;
+const captureContext = () => ({ key: contextKey(), sequence: contextSequence });
+const isCurrentContext = (context?: { key: string; sequence: number }) =>
+  !context || (context.key === contextKey() && context.sequence === contextSequence);
 export function notify(message: string, kind = "success") {
   store.toast = { message, kind };
   clearTimeout(toastTimer);
@@ -63,16 +70,20 @@ async function request(path: string, options: RequestInit = {}) {
   return body;
 }
 export async function login(actor = store.actor, reload = true) {
+  const requestSequence = ++loginSequence;
   const r = await request("/session", {
     method: "POST",
     body: JSON.stringify({ actorId: actor }),
   });
+  if (requestSequence !== loginSequence) return;
+  contextSequence++;
   store.token = r.token;
   store.actor = actor;
   localStorage.setItem("peixun.actor", actor);
   if (reload && store.data) await refresh();
 }
-function update(data: any) {
+function update(data: any, context?: { key: string; sequence: number }) {
+  if (!isCurrentContext(context)) return;
   if (data.id !== store.workspace) return;
   if (
     store.data?.id === data.id &&
@@ -84,6 +95,7 @@ function update(data: any) {
   store.error = "";
 }
 export async function refresh() {
+  const context = captureContext();
   const scope = store.scopeDomain
     ? `&domain=${encodeURIComponent(store.scopeDomain)}`
     : "";
@@ -91,14 +103,14 @@ export async function refresh() {
     const s = await request(
       `/state?workspace=${encodeURIComponent(store.workspace)}${scope}`,
     );
-    update(s);
+    update(s, context);
   } catch (e: any) {
     if (e.status === 401) {
       await login(store.actor, false);
       update(
         await request(
           `/state?workspace=${encodeURIComponent(store.workspace)}${scope}`,
-        ),
+        ), context,
       );
     } else throw e;
   }
@@ -128,6 +140,7 @@ export async function command(
   payload: any = {},
   message = "操作已保存",
 ) {
+  const context = captureContext();
   store.busy++;
   const commandId = crypto.randomUUID();
   try {
@@ -156,7 +169,7 @@ export async function command(
         throw e;
       }
     }
-    update(r.state);
+    update(r.state, context);
     if (message) notify(message);
     return r.data;
   } catch (e: any) {
@@ -168,6 +181,7 @@ export async function command(
   }
 }
 export async function switchWorkspace(id: string) {
+  contextSequence++;
   store.workspace = id;
   store.data = null;
   store.selectedPlan = "";
@@ -205,6 +219,7 @@ export async function newWorkspace(name: string, clone = false) {
   }
 }
 export async function upload(file: File, domain: SystemId) {
+  const context = captureContext();
   const f = new FormData();
   f.append("file", file);
   store.busy++;
@@ -213,7 +228,7 @@ export async function upload(file: File, domain: SystemId) {
       `/uploads?workspace=${encodeURIComponent(store.workspace)}&domain=${encodeURIComponent(domain)}`,
       { method: "POST", body: f },
     );
-    update(r.state);
+    update(r.state, context);
     notify("文件已入库，模型解析由平台模拟器承接");
   } catch (e: any) {
     notify(e.message, "error");
@@ -256,6 +271,7 @@ export function selected(items: any[], id: string) {
 export async function setScopeDomain(domain: SystemId | "") {
   if (store.scopeDomain === domain) return;
   store.scopeDomain = domain;
+  contextSequence++;
   if (!store.token) return;
   store.loading = true;
   store.data = null;

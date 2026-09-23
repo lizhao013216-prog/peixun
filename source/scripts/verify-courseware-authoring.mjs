@@ -10,7 +10,9 @@ const require = createRequire(path.join(root, "frontend/package.json"));
 const { chromium } = require("playwright");
 const base = "http://127.0.0.1:18089";
 const output = path.join(root, "test-results");
+const evidenceOutput = path.join(root, "docs", "assets");
 fs.mkdirSync(output, { recursive: true });
+fs.mkdirSync(evidenceOutput, { recursive: true });
 const server = spawn("java", ["-jar", "target/peixun-demo-1.0.0.jar"], {
   cwd: path.join(root, "backend"),
   env: { ...process.env, PORT: "18089", DB_URL: `jdbc:h2:mem:p3-${Date.now()};DB_CLOSE_DELAY=-1` },
@@ -111,8 +113,8 @@ try {
   await createDialog.getByRole("combobox", { name: "仿真环境模板 *", exact: true }).selectOption(toolTemplate.id);
   await createDialog.getByRole("button", { name: "创建草稿", exact: true }).click();
   await page.getByText("交互契约 V3", { exact: true }).waitFor();
-  await page.getByText("P3部件检查课程", { exact: true }).waitFor();
-  await page.getByText("部件检查第一课时", { exact: true }).waitFor();
+  await page.getByText("P3部件检查课程", { exact: true }).first().waitFor();
+  await page.getByText("部件检查第一课时", { exact: true }).first().waitFor();
   await page.getByText(`${toolTemplate.sceneSnapshot.id} · V${toolTemplate.sceneSnapshot.version}`, { exact: true }).waitFor();
   await page.getByText("ASSET-TOOL · V1", { exact: true }).waitFor();
   let nav = page.getByRole("navigation", { name: "教学步骤" }).getByRole("button");
@@ -160,7 +162,9 @@ try {
   await preview.getByRole("button", { name: "确认对象", exact: true }).click();
   await preview.getByText("预览操作通过", { exact: true }).waitFor();
   assert.ok((await preview.locator(".training-feedback").innerText()).includes("确定性执行"));
-  await page.screenshot({ path: path.join(output, "p3-courseware-preview.png"), fullPage: true });
+  const previewEvidence = path.join(output, "p3-courseware-preview.png");
+  await page.screenshot({ path: previewEvidence, fullPage: true });
+  fs.copyFileSync(previewEvidence, path.join(evidenceOutput, "p3-courseware-preview.png"));
   await preview.getByRole("button", { name: "返回课件制作", exact: true }).click();
 
   await button("提交审核").click();
@@ -170,7 +174,9 @@ try {
   await button("审核通过").click();
   await button("发布课程").click();
   await page.getByText("课件已发布，下一步分配培训任务", { exact: true }).waitFor();
-  await page.screenshot({ path: path.join(output, "p3-courseware-published.png"), fullPage: true });
+  const publishedEvidence = path.join(output, "p3-courseware-published.png");
+  await page.screenshot({ path: publishedEvidence, fullPage: true });
+  fs.copyFileSync(publishedEvidence, path.join(evidenceOutput, "p3-courseware-published.png"));
 
   current = await state(admin);
   const published = current.courses.find((item) => item.id === courseware.id);
@@ -190,7 +196,9 @@ try {
   const revision = current.courses.find((item) => item.parentId === published.id);
   assert.equal(revision.steps[0].target, "TOOL-01", "rebind must not silently replace step targets");
   assert.deepEqual(current.courses.find((item) => item.id === published.id).publishedSnapshot, frozenV1, "V2 draft must not mutate V1 snapshot");
-  await page.screenshot({ path: path.join(output, "p3-courseware-rebind-impact.png"), fullPage: true });
+  const rebindEvidence = path.join(output, "p3-courseware-rebind-impact.png");
+  await page.screenshot({ path: rebindEvidence, fullPage: true });
+  fs.copyFileSync(rebindEvidence, path.join(evidenceOutput, "p3-courseware-rebind-impact.png"));
 
   assert.deepEqual(errors, []);
   console.log("PASS: P3 curriculum/unit, five-step authoring, explicit template binding, dynamic actions, draft gates, shared-rule preview, independent review, immutable revision and V2 compatibility boundary.");

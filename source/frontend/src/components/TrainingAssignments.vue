@@ -7,6 +7,7 @@ import { systemName, type SystemId } from "../domain";
 import Icon from "./Icon.vue";
 import Badge from "./Badge.vue";
 import Modal from "./Modal.vue";
+import EquipmentSceneView from "./EquipmentSceneView.vue";
 const router = useRouter(),
   s = computed(() => store.data);
 const props = defineProps<{ domain: SystemId }>();
@@ -191,6 +192,7 @@ async function start() {
           }}</b
         >
       </div>
+      <EquipmentSceneView :context-id="starting.id" :domain="starting.domain" :title="`${systemName(domain)} · ${starting.name}`" :scene="selectedCourse?.sceneSnapshot" :topology="selectedCourse?.topologySnapshot" mode="preview" compact show-relations />
       <div class="info-note">
         操作顺序：选择对象 → 点击具体动作按钮 → 阅读结果 →
         继续下一步。选错对象不通过本步，可按提示重试。

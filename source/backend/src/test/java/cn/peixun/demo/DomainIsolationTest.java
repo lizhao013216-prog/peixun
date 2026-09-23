@@ -63,6 +63,9 @@ class DomainIsolationTest {
                 "learnerId",
                 "LEARNER_B"));
     state.withArray("tasks").add(obj("id", "SUPPORT-TASK", "domain", "SUPPORT"));
+    state.withArray("stations")
+        .add(obj("id", "STATION-OP", "domain", "OPERATION"))
+        .add(obj("id", "STATION-MAINT", "domain", "MAINTENANCE"));
 
     ObjectNode operation = WorkspaceProjection.forActor(state, "LEARNER_A", "OPERATION");
     assertEquals(1, operation.withArray("courses").size());
@@ -70,11 +73,14 @@ class DomainIsolationTest {
     assertEquals(1, operation.withArray("assignments").size());
     assertEquals(1, operation.withArray("attempts").size());
     assertEquals(0, operation.withArray("tasks").size());
+    assertEquals(0, operation.withArray("stations").size(), "学员未指定台位时不应看到台位目录");
 
     ObjectNode maintenance = WorkspaceProjection.forActor(state, "INSTRUCTOR", "MAINTENANCE");
     assertEquals(1, maintenance.withArray("courses").size());
     assertEquals("COURSE-MAINT", maintenance.withArray("courses").get(0).path("id").asText());
     assertEquals(0, maintenance.withArray("tasks").size());
+    assertEquals(1, maintenance.withArray("stations").size());
+    assertEquals("STATION-MAINT", maintenance.withArray("stations").get(0).path("id").asText());
 
     ObjectNode support = WorkspaceProjection.forActor(state, "PLANNER", "SUPPORT");
     assertEquals(0, support.withArray("courses").size());

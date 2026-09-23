@@ -22,16 +22,35 @@ const scene = ref<any>(JSON.parse(JSON.stringify(s.value.scene))),
   stationForm = ref(false),
   station = ref({
     name: "泵组操作台位",
-    protocol: "TCP",
     address: "mock://station/pump-01",
-    mapping: "button.start → CTRL.startRequest",
+    point: "button.start",
+    objectId: "",
+    actionId: "",
+    parameterValue: "",
   }),
+  stationAttemptId = ref(""),
   templateName = ref("泵组操作系统模板"),
   showTemplate = ref(false);
 const isEditor = computed(() =>
   ["legacy-editor", "projects", "scenes"].includes(props.page.feature),
 );
 const isCourse = computed(() => props.page.feature === "coursewares");
+const isStations = computed(() => props.page.feature === "stations");
+const stationObjects = computed(() => {
+  const result = new Map<string, any>();
+  for (const template of s.value.systemTemplates || [])
+    for (const item of template.sceneSnapshot?.objects || []) result.set(item.id, item);
+  return [...result.values()];
+});
+const stationActions = computed(() => stationObjects.value.find((item: any) => item.id === station.value.objectId)?.actions || []);
+async function saveStation() {
+  const action = stationActions.value.find((item: any) => item.id === station.value.actionId);
+  const parameters: any = {};
+  const definition = action?.parameters?.[0];
+  if (definition) parameters[definition.id] = definition.valueType === "NUMBER" ? Number(station.value.parameterValue || 0) : definition.valueType === "BOOLEAN" ? station.value.parameterValue === "true" : station.value.parameterValue;
+  const result = await command("training.station.save", { domain: domain.value, name: station.value.name, address: station.value.address, mappings: [{ point: station.value.point, objectId: station.value.objectId, actionId: station.value.actionId, parameters }] }, "模拟台位已创建");
+  if (result) stationForm.value = false;
+}
 async function doCourse(action: string, c: any) {
   const actual = c.interactionSchemaVersion === 3
     ? action.replace("course.", "courseware.")
@@ -473,7 +492,7 @@ const pendingCourses = computed(() =>
       >
     </section></template
   >
-  <template v-else-if="page.id === 'S105'"
+  <template v-else-if="isStations"
     ><div class="toolbar">
       <span class="pill">协议与设备输入模拟</span><span class="spacer"></span
       ><button class="btn primary" @click="stationForm = true">
@@ -492,7 +511,7 @@ const pendingCourses = computed(() =>
           <thead>
             <tr>
               <th>台位</th>
-              <th>协议</th>
+              <th>所属系统</th>
               <th>点位映射</th>
               <th>状态</th>
               <th>操作</th>
@@ -504,15 +523,15 @@ const pendingCourses = computed(() =>
                 <b>{{ st.name }}</b
                 ><small>{{ st.address }}</small>
               </td>
-              <td>{{ st.protocol }}</td>
-              <td>{{ st.mapping }}</td>
+              <td>{{ st.domain }}</td>
+              <td>{{ st.mappings?.map((item: any) => `${item.point} → ${item.objectId}.${item.actionId}`).join('；') }}</td>
               <td><Badge :status="st.status" /></td>
               <td>
                 <div class="actions">
                   <button
                     class="text-btn"
                     @click="
-                      command('station.connect', {
+                      command('training.station.connect', {
                         id: st.id,
                         connected: st.status !== 'CONNECTED',
                       })
@@ -523,10 +542,11 @@ const pendingCourses = computed(() =>
                     }}</button
                   ><button
                     class="text-btn"
+                    :disabled="!stationAttemptId || st.status !== 'CONNECTED'"
                     @click="
                       command(
-                        'station.signal',
-                        { id: st.id, point: 'button.start' },
+                        'training.station.signal',
+                        { id: st.id, attemptId: stationAttemptId, point: st.mappings?.[0]?.point },
                         '模拟台位信号已提交',
                       )
                     "
@@ -551,10 +571,10 @@ const pendingCourses = computed(() =>
     </section>
     <div class="info-note" style="margin-top: 18px">
       <Icon
-        name="Info"
+      name="Info"
         :size="16"
       />TCP、VRPN与XR输入均使用假设平台能力。本演示不会连接真实设备；有效输入与鼠标操作经过相同业务规则。
-    </div></template
+    </div><label class="field" style="margin-top:12px"><span>当前接收信号的训练实例</span><select v-model="stationAttemptId"><option value="">请选择运行中的训练</option><option v-for="attempt in s.attempts.filter((item: any) => item.domain === domain && ['RUNNING','PAUSED'].includes(item.status))" :key="attempt.id" :value="attempt.id">{{ attempt.courseName }} · {{ attempt.learnerId }} · {{ attempt.status }}</option></select></label></template
   >
   <template v-else-if="page.id === 'C04'"
     ><div class="toolbar">
@@ -662,25 +682,18 @@ const pendingCourses = computed(() =>
       <label class="field"
         ><span>台位名称</span><input v-model="station.name" /></label
       ><label class="field"
-        ><span>协议配置</span
-        ><select v-model="station.protocol">
-          <option>TCP</option>
-          <option>VRPN</option>
-          <option>XR-CONTROLLER</option>
-        </select></label
-      ><label class="field"
         ><span>模拟地址</span><input v-model="station.address" /></label
       ><label class="field"
-        ><span>点位映射</span><input v-model="station.mapping"
-      /></label>
+        ><span>信号点</span><input v-model="station.point" placeholder="例如 button.start" /></label>
+      <label class="field"><span>映射对象</span><select v-model="station.objectId" @change="station.actionId = stationActions[0]?.id || ''"><option value="">请选择当前系统模板对象</option><option v-for="item in stationObjects" :key="item.id" :value="item.id">{{ item.name }} · {{ item.id }}</option></select></label>
+      <label class="field"><span>映射动作</span><select v-model="station.actionId"><option v-for="action in stationActions" :key="action.id" :value="action.id">{{ action.label || action.id }}</option></select></label>
+      <label v-if="stationActions.find((item: any) => item.id === station.actionId)?.parameters?.length" class="field"><span>类型化参数值</span><input v-model="station.parameterValue" /></label>
     </div>
     <template #footer
       ><button
         class="btn primary"
-        @click="
-          command('station.save', station, '模拟台位已创建');
-          stationForm = false;
-        "
+        :disabled="!station.name.trim() || !station.point.trim() || !station.objectId || !station.actionId"
+        @click="saveStation"
       >
         创建台位
       </button></template

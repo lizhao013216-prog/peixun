@@ -74,7 +74,7 @@ try {
   const routes = [
     ...catalog.matchAll(/page\(\s*"[^"]+",\s*"[^"]+",\s*"([^"]+)"/g),
   ].map((match) => match[1].replace(":id", "current"));
-  assert.equal(routes.length, 53);
+  assert.equal(routes.length, 55);
   for (const route of routes) {
     await page.goto(base + route);
     await page.locator("main h1").first().waitFor();
@@ -330,7 +330,7 @@ try {
     `# 浏览器验收\n\n- 53个规范页面可访问。\n- 三子系统任务按领域隔离，旧课件路径正确重定向。\n- 旧设备组网路径进入只读兼容工程，不再写入全局单例。\n- 无效课件深链明确提示，不回退到最后一项。\n- 保障教学旧入口正确重定向到已开放的操作课件。\n- 1440px桌面页面无整体横向溢出。\n- 1366×768培训任务、学员训练和保障演练关键操作可见且无整体溢出。\n- 390px工作台与折叠菜单可用。\n- 演练复盘物料账本随时间变化。\n- 未捕获页面异常：${errors.length}。\n- 完整案例由HTTP业务命令生成。\n- 页面按钮生成独立完整案例通过。\n- 三系统指引入口、角色切换和刷新恢复通过。\n- 正文字号16px，工作台及演示中心不含旧展示名称。\n`,
   );
   console.log(
-    "PASS: 53 routes, domain isolation, deep links, 1440/1366/390 layout, replay inventory, legacy topology redirect, course form persistence, golden HTTP fixture, no page errors.",
+    "PASS: 55 routes, domain isolation, deep links, 1440/1366/390 layout, replay inventory, legacy topology redirect, course form persistence, golden HTTP fixture, no page errors.",
   );
 } finally {
   if (browser) await browser.close();

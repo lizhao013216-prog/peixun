@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.node.*;
 import java.util.*;
 
 public final class WorkspaceMigration {
-  public static final int CURRENT_SCHEMA_VERSION = 7;
+  public static final int CURRENT_SCHEMA_VERSION = 8;
 
   private WorkspaceMigration() {}
 
@@ -41,7 +41,12 @@ public final class WorkspaceMigration {
     }
     if (version < 7) {
       migrateV6ToV7(s);
-      s.put("schemaVersion", 7);
+      version = 7;
+      s.put("schemaVersion", version);
+    }
+    if (version < 8) {
+      migrateV7ToV8(s);
+      s.put("schemaVersion", 8);
     }
     return s;
   }
@@ -171,6 +176,40 @@ public final class WorkspaceMigration {
 
   private static void migrateV6ToV7(ObjectNode s) {
     s.withArray("trainingArchives");
+  }
+
+  private static void migrateV7ToV8(ObjectNode s) {
+    for (JsonNode item : s.withArray("tasks")) {
+      ObjectNode task = (ObjectNode) item;
+      if (!task.hasNonNull("deadline") && task.hasNonNull("dueMinutes"))
+        task.set("deadline", task.path("dueMinutes").deepCopy());
+      if (!task.hasNonNull("taskType") && task.hasNonNull("type"))
+        task.set("taskType", task.path("type").deepCopy());
+      if (!task.hasNonNull("equipmentId") && task.hasNonNull("object"))
+        task.set("equipmentId", task.path("object").deepCopy());
+      if (!task.hasNonNull("equipmentType")) task.put("equipmentType", "TRAINING_DISCOVERY");
+      if (!task.hasNonNull("description") && task.hasNonNull("scope"))
+        task.set("description", task.path("scope").deepCopy());
+      if (!task.has("wbs")) task.set("wbs", arr());
+      if (task.path("deadline").isMissingNode() || task.path("deadline").isNull())
+        task.put("migrationReviewRequired", true);
+    }
+    for (JsonNode item : s.withArray("stations")) {
+      ObjectNode station = (ObjectNode) item;
+      if (!station.hasNonNull("domain")) {
+        station.put("domain", "OPERATION");
+        station.put("legacyScope", true);
+      }
+    }
+    Map<String, String> archiveByAttempt = new HashMap<>();
+    for (JsonNode item : s.withArray("trainingArchives")) {
+      ObjectNode archive = (ObjectNode) item;
+      String attemptId = archive.path("attemptId").asText();
+      if (attemptId.isBlank()) continue;
+      String canonical = archiveByAttempt.putIfAbsent(attemptId, archive.path("id").asText());
+      if (canonical != null) archive.put("duplicateOf", canonical);
+    }
+    for (JsonNode item : s.withArray("assets")) SimulationCapabilities.enrichAsset((ObjectNode) item);
   }
 
   private static void addLegacyProject(ObjectNode s, String domain) {

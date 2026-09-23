@@ -7,6 +7,7 @@ import Icon from "../components/Icon.vue";
 import Badge from "../components/Badge.vue";
 import Modal from "../components/Modal.vue";
 import Empty from "../components/Empty.vue";
+import EquipmentSceneView from "../components/EquipmentSceneView.vue";
 const props = defineProps<{ page: PageMeta }>(),
   router = useRouter(),
   s = computed(() => store.data);
@@ -18,12 +19,15 @@ const tab = ref("attempts"),
   reviewComment = ref("资料完整，来源可追溯，同意通过。"),
   supplement = ref("已补充预案优化原因及关联训练说明。"),
   issueModal = ref<any>(null),
-  issueName = ref("建议完善泵组异常识别与部件检查提示");
+  issueType = ref("CONTENT"),
+  issueName = ref("建议完善泵组异常识别与部件检查提示"),
+  issueDescription = ref("请结合本次训练步骤、结果与事件说明需要处理的具体问题。");
 const archive = computed(() =>
   selected(s.value.archives, store.selectedArchive),
 );
 const allTabs = [
   ["attempts", "训练记录"],
+  ["trainingArchives", "已确认归档"],
   ["runs", "演练记录"],
   ["executions", "模拟实绩"],
   ["evaluations", "指标评估"],
@@ -32,7 +36,7 @@ const allTabs = [
 ];
 const tabs = computed(() =>
   props.page.feature === "training-records"
-    ? allTabs.filter(([key]) => key === "attempts")
+    ? allTabs.filter(([key]) => ["attempts", "trainingArchives"].includes(key))
     : allTabs,
 );
 const recordsFor = (key: string) =>
@@ -70,26 +74,12 @@ async function review(approved: boolean) {
 async function issue() {
   const r = await command(
     "issue.create",
-    { id: issueModal.value.id, name: issueName.value },
+    { id: issueModal.value.id, type: issueType.value, name: issueName.value, description: issueDescription.value },
     "问题单已保存，转任务仍需人工确认",
   );
   if (r) issueModal.value = null;
 }
-async function issueTask(i: any) {
-  const r = await command(
-    "task.create",
-    {
-      name: i.name + " · 保障任务",
-      sourceIssueId: i.id,
-      taskType: "维修",
-      deadline: 270,
-      importance: 80,
-      description: "由训练问题人工确认创建：" + i.name,
-    },
-    "已确认创建保障任务并保留训练问题来源",
-  );
-  if (r) router.push(pathFor("S301", r.id));
-}
+function issueTask() { router.push("/support/training-issues"); }
 </script>
 <template>
   <template v-if="page.id === 'S316'"
@@ -471,17 +461,7 @@ async function issueTask(i: any) {
             <b>{{ i.name }}</b>
             <p>来源 {{ i.sourceId }} · {{ i.id }}</p>
           </div>
-          <button
-            class="text-btn"
-            :disabled="s.tasks.some((t: any) => t.sourceIssueId === i.id)"
-            @click="issueTask(i)"
-          >
-            {{
-              s.tasks.some((t: any) => t.sourceIssueId === i.id)
-                ? "已生成关联任务"
-                : "确认创建保障任务"
-            }}
-          </button>
+          <button class="text-btn" @click="issueTask">进入问题处理</button>
         </div>
         <p v-if="!s.issues.length" class="empty-small">
           在已完成的训练记录中创建问题单，保留原始课程和操作来源。
@@ -530,7 +510,13 @@ async function issueTask(i: any) {
         :size="16"
       />已保存业务记录，只读查看；不会再次触发计分、库存或工序事件。
     </div>
-    <pre class="code-area">{{ JSON.stringify(detail, null, 2) }}</pre>
+    <template v-if="tab === 'trainingArchives'">
+      <div class="completion-metrics"><div><b>{{ detail.score ?? '不计分' }}</b><span>归档成绩</span></div><div><b>{{ detail.events?.length || 0 }}</b><span>过程事件</span></div><div><b>{{ detail.courseRef?.version || '—' }}</b><span>课件版本</span></div><div><b>{{ detail.archivedAt ? new Date(detail.archivedAt).toLocaleString('zh-CN') : '—' }}</b><span>归档时间</span></div></div>
+      <EquipmentSceneView v-if="detail.courseSnapshot?.sceneSnapshot" :context-id="detail.id" :domain="detail.domain" title="归档训练最终场景" :scene="detail.courseSnapshot.sceneSnapshot" :topology="detail.courseSnapshot.topologySnapshot" :states="detail.finalStates" mode="result" compact show-relations />
+      <div class="panel-body event-list"><article v-for="event in detail.events || []" :key="event.id"><div class="event-sequence">#{{ event.sequence }}</div><div><b>{{ event.actionId }}</b><p>{{ event.reason || event.message }}</p></div><Badge :status="event.result" /></article></div>
+      <details><summary>技术详情（结构化数据）</summary><pre class="code-area">{{ JSON.stringify(detail, null, 2) }}</pre></details>
+    </template>
+    <pre v-else class="code-area">{{ JSON.stringify(detail, null, 2) }}</pre>
     <template #footer
       ><button class="btn primary" @click="download(tab, detail.id)">
         导出Markdown报告
@@ -544,7 +530,9 @@ async function issueTask(i: any) {
         {{ issueModal.id }}
       </div>
       <label class="field"
-        ><span>问题描述</span><textarea v-model="issueName" />
+        ><span>问题类型</span><select v-model="issueType"><option value="CONTENT">课程内容</option><option value="LEARNING">学习补训</option><option value="PLATFORM">平台技术</option><option value="EQUIPMENT_SUPPORT">疑似装备保障</option></select></label>
+      <label class="field"><span>问题标题</span><input v-model="issueName" /></label>
+      <label class="field"><span>问题描述</span><textarea v-model="issueDescription" />
       </label>
     </div>
     <template #footer

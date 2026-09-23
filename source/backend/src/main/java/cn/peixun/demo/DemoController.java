@@ -81,7 +81,7 @@ public class DemoController {
     ObjectNode record = find(s, collection, id);
     if (DemoService.role(actor).equals("LEARNER"))
       require(
-          collection.equals("attempts") && record.path("learnerId").asText().equals(actor),
+          Set.of("attempts", "trainingArchives").contains(collection) && record.path("learnerId").asText().equals(actor),
           "只能导出本人的训练报告");
     return ResponseEntity.ok()
         .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=report-" + id + ".md")

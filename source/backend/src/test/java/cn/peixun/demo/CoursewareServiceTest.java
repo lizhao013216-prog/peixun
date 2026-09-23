@@ -147,6 +147,24 @@ class CoursewareServiceTest {
   }
 
   @Test
+  void previewSessionKeepsOneRuntimeAndChecksActualInput() {
+    Fixture fixture = fixture("ASSET-SENSOR", "SENSOR-01", "连续预览模板");
+    ObjectNode courseware = createCourseware(fixture.state, fixture.template, "连续预览课件");
+    ArrayNode steps = validSteps(courseware, "SENSOR-01", "SET_VALUE");
+    for (JsonNode item : steps) ((ObjectNode) item).set("parameters", obj("value", 0.5));
+    courseware = save(fixture.state, courseware, steps, obj("total", 100, "errorPenalty", 5, "helpPenalty", 2));
+    ObjectNode session = CoursewareService.apply(fixture.state, "coursewarePreview.start", obj("id", courseware.path("id").asText()), "AUTHOR", "OPERATION");
+    String previewId = session.path("id").asText();
+    ObjectNode rejected = CoursewareService.apply(fixture.state, "coursewarePreview.action", obj("previewId", previewId, "stepId", steps.get(0).path("id").asText(), "target", "SENSOR-01", "actionId", "SET_VALUE", "parameters", obj("value", 0.2)), "AUTHOR", "OPERATION");
+    assertFalse(rejected.path("passed").asBoolean());
+    ObjectNode passed = CoursewareService.apply(fixture.state, "coursewarePreview.action", obj("previewId", previewId, "stepId", steps.get(0).path("id").asText(), "target", "SENSOR-01", "actionId", "SET_VALUE", "parameters", obj("value", 0.5)), "AUTHOR", "OPERATION");
+    assertTrue(passed.path("passed").asBoolean());
+    ObjectNode continued = CoursewareService.apply(fixture.state, "coursewarePreview.continue", obj("previewId", previewId), "AUTHOR", "OPERATION");
+    assertEquals(previewId, continued.path("id").asText());
+    assertEquals(1, continued.path("currentStep").asInt());
+  }
+
+  @Test
   void typedParametersAndStateConditionsAreCheckedAgainstObjectCapabilities() {
     Fixture fixture = fixture("ASSET-SENSOR", "SENSOR-01", "传感器模板");
     ObjectNode courseware = createCourseware(fixture.state, fixture.template, "传感器课件");

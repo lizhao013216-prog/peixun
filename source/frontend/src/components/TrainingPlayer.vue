@@ -10,6 +10,7 @@ import Icon from "./Icon.vue";
 import Badge from "./Badge.vue";
 import Modal from "./Modal.vue";
 import SupportTrainingPanel from "./SupportTrainingPanel.vue";
+import EquipmentSceneView from "./EquipmentSceneView.vue";
 const route = useRoute(),
   router = useRouter(),
   s = computed(() => store.data);
@@ -76,8 +77,9 @@ const index = computed(() =>
 const current = computed(() => lessonStep(course.value?.steps[index.value]));
 const confirmed = computed(
   () =>
-    assignment.value?.evidenceAttemptId === attempt.value?.id &&
-    assignment.value?.confirmed,
+    assignment.value?.confirmedAttemptIds?.includes(attempt.value?.id) ||
+    (assignment.value?.confirmed && assignment.value?.evidenceAttemptId === attempt.value?.id) ||
+    s.value.trainingArchives?.some((item: any) => item.attemptId === attempt.value?.id),
 );
 const teacher = computed(
   () => store.accounts.find((a) => a.id === store.actor)?.role === "INSTRUCTOR",
@@ -282,6 +284,7 @@ async function createIssue() {
     >
       <span class="task-eyebrow">训练完成</span>
       <h2>全部步骤已完成，接下来查看成绩与培训证据。</h2>
+      <EquipmentSceneView :context-id="`result-${attempt.id}`" :domain="attempt.domain" :title="`${systemName(attemptDomain)} · 本次训练最终场景`" :scene="course.sceneSnapshot" :topology="course.topologySnapshot" :states="attempt.runtime?.states" mode="result" compact show-relations />
       <div class="completion-metrics">
         <div>
           <b>{{ attempt.score ?? "不计分" }}</b
@@ -422,6 +425,9 @@ async function createIssue() {
             :step="current"
             :objects="modern ? trainingObjects : undefined"
             :states="modern ? attempt.runtime?.states : undefined"
+            :topology="modern ? course?.topologySnapshot : undefined"
+            :domain="attempt.domain"
+            :scene-title="`${systemName(attemptDomain)} · ${course?.name || attempt.courseName}`"
             :state="attempt.entityState"
             :free="attempt.mode === 'FREE'"
             :disabled="

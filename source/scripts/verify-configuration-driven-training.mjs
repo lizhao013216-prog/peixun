@@ -10,7 +10,9 @@ const require = createRequire(path.join(root, "frontend/package.json"));
 const { chromium } = require("playwright");
 const base = "http://127.0.0.1:18090";
 const output = path.join(root, "test-results");
+const evidenceOutput = path.join(root, "docs", "assets");
 fs.mkdirSync(output, { recursive: true });
+fs.mkdirSync(evidenceOutput, { recursive: true });
 const server = spawn("java", ["-jar", "target/peixun-demo-1.0.0.jar"], {
   cwd: path.join(root, "backend"),
   env: { ...process.env, PORT: "18090", DB_URL: `jdbc:h2:mem:p4-${Date.now()};DB_CLOSE_DELAY=-1` },
@@ -132,11 +134,15 @@ try {
   await page.getByRole("button", { name: "确认当前对象", exact: true }).click();
   await page.getByText("操作成功 · 本步已通过", { exact: true }).waitFor();
   await page.getByRole("button", { name: "完成训练", exact: true }).waitFor();
-  await page.screenshot({ path: path.join(output, "p4-training-step-passed.png"), fullPage: true });
+  const stepEvidence = path.join(output, "p4-training-step-passed.png");
+  await page.screenshot({ path: stepEvidence, fullPage: true });
+  fs.copyFileSync(stepEvidence, path.join(evidenceOutput, "p4-training-step-passed.png"));
   await page.getByRole("button", { name: "完成训练", exact: true }).click();
   await page.getByRole("heading", { name: "全部步骤已完成，接下来查看成绩与培训证据。", exact: true }).waitFor();
   await page.getByText("100", { exact: true }).first().waitFor();
-  await page.screenshot({ path: path.join(output, "p4-training-completed.png"), fullPage: true });
+  const completedEvidence = path.join(output, "p4-training-completed.png");
+  await page.screenshot({ path: completedEvidence, fullPage: true });
+  fs.copyFileSync(completedEvidence, path.join(evidenceOutput, "p4-training-completed.png"));
 
   const finalState = await state(learner);
   const completed = finalState.attempts.find((item) => item.id === attempt.id);

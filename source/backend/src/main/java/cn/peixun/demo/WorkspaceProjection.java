@@ -39,6 +39,7 @@ public final class WorkspaceProjection {
     retain(s.withArray("assignments"), item -> domain.equals(item.path("domain").asText()));
     retain(s.withArray("attempts"), item -> domain.equals(item.path("domain").asText()));
     retain(s.withArray("trainingArchives"), item -> domain.equals(item.path("domain").asText()));
+    retain(s.withArray("stations"), item -> domain.equals(item.path("domain").asText()));
     retain(s.withArray("feedback"), item -> domain.equals(item.path("domain").asText()));
     Set<String> attemptIds = ids(s.withArray("attempts"));
     retain(
@@ -78,6 +79,10 @@ public final class WorkspaceProjection {
     retain(s.withArray("assignments"), item -> actor.equals(item.path("learnerId").asText()));
     retain(s.withArray("attempts"), item -> actor.equals(item.path("learnerId").asText()));
     retain(s.withArray("trainingArchives"), item -> actor.equals(item.path("learnerId").asText()));
+    Set<String> assignedStationIds = new HashSet<>();
+    for (JsonNode item : s.withArray("assignments"))
+      if (!item.path("stationId").asText().isBlank()) assignedStationIds.add(item.path("stationId").asText());
+    retain(s.withArray("stations"), item -> assignedStationIds.contains(item.path("id").asText()));
     Set<String> courseIds = new HashSet<>();
     for (JsonNode item : s.withArray("assignments")) courseIds.add(item.path("courseId").asText());
     for (JsonNode item : s.withArray("attempts")) courseIds.add(item.path("courseId").asText());

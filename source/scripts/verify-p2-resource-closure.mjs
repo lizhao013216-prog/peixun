@@ -10,7 +10,9 @@ const require = createRequire(path.join(root, "frontend/package.json"));
 const { chromium } = require("playwright");
 const base = "http://127.0.0.1:18088";
 const output = path.join(root, "test-results");
+const evidenceOutput = path.join(root, "docs", "assets");
 fs.mkdirSync(output, { recursive: true });
+fs.mkdirSync(evidenceOutput, { recursive: true });
 const server = spawn("java", ["-jar", "target/peixun-demo-1.0.0.jar"], {
   cwd: path.join(root, "backend"),
   env: { ...process.env, PORT: "18088", DB_URL: `jdbc:h2:mem:p2d-${Date.now()};DB_CLOSE_DELAY=-1` },
@@ -155,7 +157,10 @@ try {
     await page.reload();
     await page.locator(".project-card").filter({ hasText: results[system.id].template.name }).first().getByRole("button", { name: "查看版本详情" }).click();
     await page.getByText(`${system.name}单对象模板使用说明`, { exact: true }).waitFor();
-    await page.screenshot({ path: path.join(output, `p2d-${system.slug}-closure.png`), fullPage: true });
+    const evidenceName = `p2d-${system.slug}-closure.png`;
+    const evidenceFile = path.join(output, evidenceName);
+    await page.screenshot({ path: evidenceFile, fullPage: true });
+    fs.copyFileSync(evidenceFile, path.join(evidenceOutput, evidenceName));
   }
   assert.deepEqual(errors, []);
   console.log("PASS: P2-D three-system asset → project → preview → publish → instantiate closure, scoped receipts/read/download and refresh recovery.");

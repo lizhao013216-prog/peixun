@@ -22,7 +22,7 @@ const fileInput = ref<HTMLInputElement>();
 const domain = computed(() => props.page.system);
 const role = computed(() => store.accounts.find((item: any) => item.id === store.actor)?.role || "");
 const canManage = computed(() => !!domain.value && ["ADMIN", "AUTHOR", "INSTRUCTOR"].includes(role.value));
-const form = ref({ name: "", category: "模型", format: "FBX", description: "" });
+const form = ref({ name: "", category: "模型", format: "FBX", description: "", capabilityTemplate: "GENERIC", symbolKey: "GENERIC", initialStatus: "READY", initialValue: 0 });
 const categories = ["全部资源", "模型", "场景", "文档", "图像", "动画", "视频", "音频", "环境"];
 const assets = computed(() =>
   (store.data?.assets || []).filter(
@@ -43,12 +43,12 @@ async function create() {
   if (!domain.value) return;
   const result = await command(
     "asset.import",
-    { ...form.value, ownerSystem: domain.value, visibility: "PRIVATE", sharedWith: [] },
+    { ...form.value, initialState: { status: form.value.initialStatus, ...(form.value.capabilityTemplate === 'SENSOR' ? { value: form.value.initialValue } : {}) }, ownerSystem: domain.value, visibility: "PRIVATE", sharedWith: [] },
     "资源草稿已创建",
   );
   if (result) {
     showCreate.value = false;
-    form.value = { name: "", category: "模型", format: "FBX", description: "" };
+    form.value = { name: "", category: "模型", format: "FBX", description: "", capabilityTemplate: "GENERIC", symbolKey: "GENERIC", initialStatus: "READY", initialValue: 0 };
   }
 }
 async function process(asset: any) {
@@ -114,6 +114,10 @@ function toggleTarget(target: SystemId) {
       <label class="field full"><span>资源名称 *</span><input v-model="form.name" placeholder="例如：标准工具组" /></label>
       <label class="field"><span>资源类别</span><select v-model="form.category"><option v-for="item in categories.slice(1)" :key="item">{{ item }}</option></select></label>
       <label class="field"><span>源格式</span><select v-model="form.format"><option v-for="item in ['FBX','OBJ','STEP','GLB','PNG','SVG','PDF','MP4','WAV']" :key="item">{{ item }}</option></select></label>
+      <label class="field"><span>模拟能力模板</span><select v-model="form.capabilityTemplate" @change="form.symbolKey = form.capabilityTemplate"><option value="GENERIC">通用确认对象</option><option value="PUMP">泵/动力设备</option><option value="VALVE">阀门/开关设备</option><option value="SENSOR">传感器/参数输入</option><option value="CONTROL">控制柜/控制单元</option><option value="TOOL">工具/检查对象</option><option value="WORKBENCH">工作台/资源位置</option></select></label>
+      <label class="field"><span>场景符号</span><select v-model="form.symbolKey"><option v-for="item in ['GENERIC','PUMP','VALVE','SENSOR','CONTROL','TOOL','WORKBENCH']" :key="item">{{ item }}</option></select></label>
+      <label class="field"><span>初始运行状态</span><select v-model="form.initialStatus"><option value="READY">就绪</option><option value="STOPPED">停止</option><option value="AVAILABLE">可用</option><option value="ALARM">告警</option></select></label>
+      <label v-if="form.capabilityTemplate === 'SENSOR'" class="field"><span>初始数值</span><input v-model.number="form.initialValue" type="number" step="0.1" /></label>
       <label class="field full"><span>资源说明</span><textarea v-model="form.description" /></label>
     </div>
     <template #footer><button class="btn secondary" @click="showCreate = false">取消</button><button class="btn primary" :disabled="!form.name.trim() || store.busy > 0" @click="create">创建资源</button></template>
